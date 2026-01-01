@@ -1,0 +1,37 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    jq \
+    less \
+    openssh-client \
+    ripgrep \
+    build-essential \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    bash \
+    tzdata \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash agent \
+  && mkdir -p /workspace \
+  && chown -R agent:agent /workspace
+
+USER agent
+WORKDIR /workspace
+
+RUN mkdir -p /home/agent/.config \
+  && echo 'export PS1="\[\e[0;36m\]airlock\[\e[0m\]:\[\e[0;33m\]\w\[\e[0m\]\\$ "' >> /home/agent/.bashrc \
+  && echo 'alias ll="ls -la"' >> /home/agent/.bashrc
+
+COPY --chown=agent:agent scripts/install-claude-code.sh /tmp/install-claude-code.sh
+RUN bash /tmp/install-claude-code.sh && rm -f /tmp/install-claude-code.sh
+
+CMD ["bash", "-lc", "tail -f /dev/null"]

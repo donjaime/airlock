@@ -1,0 +1,9 @@
+/bin/
+/dist/
+/*.log
+.DS_Store
+*~
+.idea/
+
+# airlock state (contains credentials + install artifacts)
+.airlock/
