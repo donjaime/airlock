@@ -18,8 +18,8 @@ type Runner struct {
 func NewRunner(e Engine) *Runner { return &Runner{Engine: e} }
 
 func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir string) (string, error) {
-	homeHost := resolveHostPath(absProjectDir, cfg.Mounts.HomeDir)
-	cacheHost := resolveHostPath(absProjectDir, cfg.Mounts.CacheDir)
+	homeHost := resolveHostPath(absProjectDir, cfg.HomeDir)
+	cacheHost := resolveHostPath(absProjectDir, cfg.CacheDir)
 
 	image := cfg.Image
 	if cfg.Build != nil {
@@ -32,7 +32,7 @@ func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir str
 		"projectDir: " + absProjectDir,
 		"containerName: " + containerName(cfg),
 		"image: " + image,
-		"workdir: " + cfg.Mounts.Workdir,
+		"workdir: " + cfg.Workdir,
 		"homeHostDir: " + homeHost,
 		"cacheHostDir: " + cacheHost,
 	}
@@ -46,8 +46,8 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 		}
 	}
 
-	homeHost := resolveHostPath(absProjectDir, cfg.Mounts.HomeDir)
-	cacheHost := resolveHostPath(absProjectDir, cfg.Mounts.CacheDir)
+	homeHost := resolveHostPath(absProjectDir, cfg.HomeDir)
+	cacheHost := resolveHostPath(absProjectDir, cfg.CacheDir)
 	if err := os.MkdirAll(homeHost, 0700); err != nil {
 		return err
 	}
@@ -92,10 +92,37 @@ func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir str
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
-func (r *Runner) Down(ctx context.Context, cfg *config.Config, absProjectDir string) error {
-	_ = r.runCmdInteractive(ctx, r.engineBin(), "stop", containerName(cfg))
-	_ = r.runCmdInteractive(ctx, r.engineBin(), "rm", "-f", containerName(cfg))
+func (r *Runner) Down(ctx context.Context, cfg *config.Config, name string) error {
+	target := name
+	if target == "" {
+		target = containerName(cfg)
+	} else if !strings.HasPrefix(target, "airlock-") {
+		target = "airlock-" + target
+	}
+	_ = r.runCmdInteractive(ctx, r.engineBin(), "stop", target)
+	_ = r.runCmdInteractive(ctx, r.engineBin(), "rm", "-f", target)
 	return nil
+}
+
+func (r *Runner) List(ctx context.Context) ([]string, error) {
+	// We use --filter name=^airlock- to match containers starting with airlock-
+	// Both podman and docker support this.
+	// We don't use -a because the requirement is to show "running" containers.
+	cmd := exec.CommandContext(ctx, r.engineBin(), "ps", "--filter", "name=^airlock-", "--format", "{{.Names}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var names []string
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 func (r *Runner) engineBin() string {
@@ -135,7 +162,7 @@ func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error
 
 func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absProjectDir, homeHost, cacheHost string) error {
 	name := containerName(cfg)
-	workdir := cfg.Mounts.Workdir
+	workdir := cfg.Workdir
 
 	envArgs := []string{
 		"-e", "HOME=/home/agent",
@@ -152,6 +179,16 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 		"-v", absProjectDir + ":" + workdir + ":Z",
 		"-v", homeHost + ":/home/agent:Z",
 		"-v", cacheHost + ":/home/agent/.cache:Z",
+	}
+
+	for _, m := range cfg.Mounts {
+		src := resolveHostPath(absProjectDir, m.Source)
+		mode := m.Mode
+		if mode == "" {
+			mode = "rw"
+		}
+		// We add :Z for podman relabeling, similar to other mounts
+		mountArgs = append(mountArgs, "-v", fmt.Sprintf("%s:%s:%s,Z", src, m.Target, mode))
 	}
 
 	args := []string{

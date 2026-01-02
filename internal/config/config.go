@@ -15,9 +15,12 @@ type Config struct {
 	Image      string       `yaml:"image"`
 	Build      *BuildConfig `yaml:"build"`
 	Engine     Engine       `yaml:"engine"`
-	Mounts     Mounts       `yaml:"mounts"`
+	HomeDir    string       `yaml:"home"`
+	CacheDir   string       `yaml:"cache"`
+	Mounts     []Mount      `yaml:"mounts"`
 	Env        Env          `yaml:"env"`
 	Agent      Agent        `yaml:"agent"`
+	Workdir    string       `yaml:"workdir"`
 }
 
 type BuildConfig struct {
@@ -30,10 +33,10 @@ type Engine struct {
 	Preferred string `yaml:"preferred"` // "podman" or "docker" or empty
 }
 
-type Mounts struct {
-	Workdir  string `yaml:"workdir"`  // default: /workspace
-	HomeDir  string `yaml:"homeDir"`  // default: ./.airlock/home (host path)
-	CacheDir string `yaml:"cacheDir"` // default: ./.airlock/cache (host path)
+type Mount struct {
+	Source string `yaml:"source"`
+	Target string `yaml:"target"`
+	Mode   string `yaml:"mode"` // "rw" or "ro"
 }
 
 type Env struct {
@@ -116,14 +119,14 @@ func Load(path string) (*Config, error) {
 		c.Image = "ghcr.io/donjaime/airlock-base:latest"
 	}
 
-	if c.Mounts.Workdir == "" {
-		c.Mounts.Workdir = "/workspace"
+	if c.Workdir == "" {
+		c.Workdir = "/workspace"
 	}
-	if c.Mounts.HomeDir == "" {
-		c.Mounts.HomeDir = "./.airlock/home"
+	if c.HomeDir == "" {
+		c.HomeDir = "./.airlock/home"
 	}
-	if c.Mounts.CacheDir == "" {
-		c.Mounts.CacheDir = "./.airlock/cache"
+	if c.CacheDir == "" {
+		c.CacheDir = "./.airlock/cache"
 	}
 
 	if c.Env.Vars == nil {
@@ -200,17 +203,21 @@ build:
   containerfile: ./example/Containerfile
   tag: airlock:my-project
 
+# Host directories that back the sandbox HOME and cache.
+# Defaults are inside the repo for simplicity.
+home: ./.airlock/home
+cache: ./.airlock/cache
+
+# To reuse across projects, point these at shared host paths, e.g.:
+# home: ~/.local/share/airlock/home
+# cache: ~/.local/share/airlock/cache
+
+workdir: /workspace
+
 mounts:
-  workdir: /workspace
-
-  # Host directories that back the sandbox HOME and cache.
-  # Defaults are inside the repo for simplicity.
-  homeDir: ./.airlock/home
-  cacheDir: ./.airlock/cache
-
-  # To reuse across projects, point these at shared host paths, e.g.:
-  # homeDir: ~/.local/share/airlock/home
-  # cacheDir: ~/.local/share/airlock/cache
+  - source: .
+    target: /workspace
+    mode: rw
 
 env:
   vars:

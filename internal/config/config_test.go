@@ -159,3 +159,53 @@ func TestInitFiles(t *testing.T) {
 		t.Errorf(".gitignore not created")
 	}
 }
+
+func TestLoadWithMounts(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "airlock-mounts-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "airlock.yaml")
+	yaml := `name: mounts-project
+home: ./.airlock/myhome
+cache: ./.airlock/mycache
+workdir: /myworkspace
+mounts:
+  - source: ./data
+    target: /mnt/data
+    mode: ro
+`
+	err = os.WriteFile(cfgPath, []byte(yaml), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.HomeDir != "./.airlock/myhome" {
+		t.Errorf("expected home ./.airlock/myhome, got %s", cfg.HomeDir)
+	}
+	if cfg.CacheDir != "./.airlock/mycache" {
+		t.Errorf("expected cache ./.airlock/mycache, got %s", cfg.CacheDir)
+	}
+	if cfg.Workdir != "/myworkspace" {
+		t.Errorf("expected workdir /myworkspace, got %s", cfg.Workdir)
+	}
+	if len(cfg.Mounts) != 1 {
+		t.Fatalf("expected 1 mount, got %d", len(cfg.Mounts))
+	}
+	if cfg.Mounts[0].Source != "./data" {
+		t.Errorf("expected mount source ./data, got %s", cfg.Mounts[0].Source)
+	}
+	if cfg.Mounts[0].Target != "/mnt/data" {
+		t.Errorf("expected mount target /mnt/data, got %s", cfg.Mounts[0].Target)
+	}
+	if cfg.Mounts[0].Mode != "ro" {
+		t.Errorf("expected mount mode ro, got %s", cfg.Mounts[0].Mode)
+	}
+}

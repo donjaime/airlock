@@ -44,8 +44,8 @@ Inside the container, Airlock mounts these directories as follows:
 ```
 Host                      Container
 ------------------------  ------------------------
-.airlock/home         →  /home/agent         # this is the container user’s `$HOME`
-.airlock/cache        →  /home/agent/.cache  # the conventional XDG cache location
+.airlock/home         →  /home/ubuntu         # this is the container user’s `$HOME`
+.airlock/cache        →  /home/ubuntu/.cache  # the conventional XDG cache location
 ```
 
 This design intentionally places the cache at `$HOME/.cache` **inside the container**, because most tools expect caches to live there by default.
@@ -348,8 +348,11 @@ sudo mv airlock /usr/local/bin/
 - `airlock exec -- <cmd...>`  
   Runs a command inside the container.
 
-- `airlock down`  
-  Stops and removes the container (keeps `.airlock` state dirs).
+- `airlock down [name]`  
+  Stops and removes the container (keeps `.airlock` state dirs). If `name` is omitted, it downs the container for the current project.
+
+- `airlock list`  
+  Lists all airlock containers.
 
 - `airlock info`  
   Prints detected engine, paths, and config.

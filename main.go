@@ -25,7 +25,8 @@ Commands:
   up         Build (if needed) and create the airlock container (idempotent)
   enter [-e var] Enter the airlock container (interactive shell)
   exec [-e var]  Execute a command inside the airlock container
-  down           Stop and remove the airlock container (keeps .airlock state dirs)
+  down [name]    Stop and remove the airlock container (keeps .airlock state dirs)
+  list           List all running airlock containers
   info           Print detected engine, paths, and config
   help           Print this help message
   version        Print version
@@ -35,7 +36,8 @@ Examples:
   airlock up
   airlock enter -e ANTHROPIC_API_KEY
   airlock exec -e SOME_VAR -- git status
-  airlock down
+  airlock down [container-name]
+  airlock list
 
 Flags:
 `, version)
@@ -78,6 +80,8 @@ func main() {
 
 	ctx := context.Background()
 
+	// help, version, init, list and down don't depend on the config file being parsed.
+	// Handle them now.
 	if cmd == "help" {
 		usage()
 		return
@@ -97,6 +101,67 @@ func main() {
 		return
 	}
 
+	if cmd == "list" {
+		eng, err := container.DetectEngine("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
+			os.Exit(1)
+		}
+		runner := container.NewRunner(eng)
+		names, err := runner.List(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, name := range names {
+			fmt.Println(name)
+		}
+		return
+	}
+
+	if cmd == "down" {
+		var target string
+		if len(cmdArgs) > 0 {
+			target = cmdArgs[0]
+		}
+
+		eng, err := container.DetectEngine("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
+			os.Exit(1)
+		}
+		runner := container.NewRunner(eng)
+
+		var cfg *config.Config
+		if target == "" {
+			cfgFile := configPath
+			if cfgFile == "" {
+				for _, cand := range []string{"airlock.yaml", "airlock.yml"} {
+					if _, err := os.Stat(cand); err == nil {
+						cfgFile = cand
+						break
+					}
+				}
+			}
+			if cfgFile == "" {
+				fmt.Fprintln(os.Stderr, "No airlock.yaml found. Run: airlock init or provide a container name")
+				os.Exit(1)
+			}
+			cfg, err = config.Load(cfgFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		if err := runner.Down(ctx, cfg, target); err != nil {
+			fmt.Fprintf(os.Stderr, "down error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Parse the config file.
 	cfgFile := configPath
 	if cfgFile == "" {
 		for _, cand := range []string{"airlock.yaml", "airlock.yml"} {
@@ -172,13 +237,6 @@ func main() {
 		}
 		if err := runner.Exec(ctx, cfg, absProj, execEnv, cmdArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "exec error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-
-	case "down":
-		if err := runner.Down(ctx, cfg, absProj); err != nil {
-			fmt.Fprintf(os.Stderr, "down error: %v\n", err)
 			os.Exit(1)
 		}
 		return

@@ -18,21 +18,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     npm \
     bash \
     tzdata \
-    golang \
+    golang-go \
   && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -s /bin/bash agent \
-  && mkdir -p /workspace \
-  && chown -R agent:agent /workspace
+RUN mkdir -p /workspace \
+  && chown -R 1000:1000 /workspace
 
-USER agent
+USER 1000:1000
+ENV HOME=/home/ubuntu
 WORKDIR /workspace
 
-RUN mkdir -p /home/agent/.config \
-  && echo 'export PS1="\[\e[0;36m\]airlock\[\e[0m\]:\[\e[0;33m\]\w\[\e[0m\]\\$ "' >> /home/agent/.bashrc \
-  && echo 'alias ll="ls -la"' >> /home/agent/.bashrc
+RUN mkdir -p /home/ubuntu/.config \
+  && echo 'export PS1="\[\e[0;36m\]airlock\[\e[0m\]:\[\e[0;33m\]\w\[\e[0m\]\\$ "' >> /home/ubuntu/.bashrc \
+  && echo 'alias ll="ls -la"' >> /home/ubuntu/.bashrc
 
-COPY --chown=agent:agent scripts/install-claude-code.sh /tmp/install-claude-code.sh
+COPY --chown=1000:1000 scripts/install-claude-code.sh /tmp/install-claude-code.sh
 RUN bash /tmp/install-claude-code.sh && rm -f /tmp/install-claude-code.sh
 
 CMD ["bash", "-lc", "tail -f /dev/null"]
