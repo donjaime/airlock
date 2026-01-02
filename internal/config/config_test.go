@@ -65,6 +65,73 @@ env:
 	}
 }
 
+func TestLoadWithBuild(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "airlock-build-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "airlock.yaml")
+	yaml := `name: build-project
+build:
+  context: ./src
+  containerfile: ./src/Containerfile
+  tag: my-tag:latest
+`
+	err = os.WriteFile(cfgPath, []byte(yaml), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Build == nil {
+		t.Fatal("expected build section to be populated")
+	}
+	if cfg.Build.Context != "./src" {
+		t.Errorf("expected context ./src, got %s", cfg.Build.Context)
+	}
+	if cfg.Build.Containerfile != "./src/Containerfile" {
+		t.Errorf("expected containerfile ./src/Containerfile, got %s", cfg.Build.Containerfile)
+	}
+	if cfg.Build.Tag != "my-tag:latest" {
+		t.Errorf("expected tag my-tag:latest, got %s", cfg.Build.Tag)
+	}
+}
+
+func TestLoadWithImage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "airlock-image-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "airlock.yaml")
+	yaml := `name: image-project
+image: my-image:latest
+`
+	err = os.WriteFile(cfgPath, []byte(yaml), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Image != "my-image:latest" {
+		t.Errorf("expected image my-image:latest, got %s", cfg.Image)
+	}
+	if cfg.Build != nil {
+		t.Error("expected build section to be nil")
+	}
+}
+
 func TestInitFiles(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "airlock-init-test-*")
 	if err != nil {

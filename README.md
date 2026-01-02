@@ -123,7 +123,7 @@ version: 1
 # If build is set, Airlock will build and tag an image for this project.
 build:
   context: ./example
-  dockerfile: ./example/Containerfile
+  containerfile: ./example/Containerfile
   tag: airlock-myproject:dev
 
 # Project-scoped persistent directories (defaults shown).

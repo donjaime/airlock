@@ -21,12 +21,17 @@ func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir str
 	homeHost := resolveHostPath(absProjectDir, cfg.Mounts.HomeDir)
 	cacheHost := resolveHostPath(absProjectDir, cfg.Mounts.CacheDir)
 
+	image := cfg.Image
+	if cfg.Build != nil {
+		image = cfg.Build.Tag
+	}
+
 	lines := []string{
 		"engine: " + string(r.Engine),
 		"config.name: " + cfg.Name,
 		"projectDir: " + absProjectDir,
 		"containerName: " + containerName(cfg),
-		"imageTag: " + cfg.Image.Tag,
+		"image: " + image,
 		"workdir: " + cfg.Mounts.Workdir,
 		"homeHostDir: " + homeHost,
 		"cacheHostDir: " + cacheHost,
@@ -35,7 +40,7 @@ func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir str
 }
 
 func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir string) error {
-	if cfg.Image.Build {
+	if cfg.Build != nil {
 		if err := r.buildImage(ctx, cfg, absProjectDir); err != nil {
 			return err
 		}
@@ -101,11 +106,14 @@ func (r *Runner) engineBin() string {
 }
 
 func (r *Runner) buildImage(ctx context.Context, cfg *config.Config, absProjectDir string) error {
-	df := cfg.Image.Containerfile
+	df := cfg.Build.Containerfile
 	if !filepath.IsAbs(df) {
 		df = filepath.Join(absProjectDir, df)
 	}
-	args := []string{"build", "-t", cfg.Image.Tag, "-f", df, absProjectDir}
+	args := []string{"build", "-t", cfg.Build.Tag, "-f", df, cfg.Build.Context}
+	if !filepath.IsAbs(cfg.Build.Context) {
+		args[len(args)-1] = filepath.Join(absProjectDir, cfg.Build.Context)
+	}
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
@@ -154,7 +162,11 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 	args = append(args, envArgs...)
 	args = append(args, mountArgs...)
 	args = append(args, "--hostname", "airlock")
-	args = append(args, cfg.Image.Tag)
+	image := cfg.Image
+	if cfg.Build != nil {
+		image = cfg.Build.Tag
+	}
+	args = append(args, image)
 	args = append(args, "bash", "-lc", "tail -f /dev/null")
 
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)

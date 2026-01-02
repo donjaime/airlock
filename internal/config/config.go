@@ -10,20 +10,20 @@ import (
 )
 
 type Config struct {
-	Name       string `yaml:"name"`
-	ProjectDir string `yaml:"projectDir"` // defaults to "."
-	Image      Image  `yaml:"image"`
-	Engine     Engine `yaml:"engine"`
-	Mounts     Mounts `yaml:"mounts"`
-	Env        Env    `yaml:"env"`
-	Agent      Agent  `yaml:"agent"`
+	Name       string       `yaml:"name"`
+	ProjectDir string       `yaml:"projectDir"` // defaults to "."
+	Image      string       `yaml:"image"`
+	Build      *BuildConfig `yaml:"build"`
+	Engine     Engine       `yaml:"engine"`
+	Mounts     Mounts       `yaml:"mounts"`
+	Env        Env          `yaml:"env"`
+	Agent      Agent        `yaml:"agent"`
 }
 
-type Image struct {
-	BaseImage     string `yaml:"baseImage"`     // optional if building locally from Containerfile
-	Containerfile string `yaml:"containerfile"` // default: "./Containerfile"
-	Build         bool   `yaml:"build"`         // default true if Containerfile exists (unless explicitly set)
-	Tag           string `yaml:"tag"`           // default: airlock:<name>
+type BuildConfig struct {
+	Context       string `yaml:"context"`
+	Containerfile string `yaml:"containerfile"`
+	Tag           string `yaml:"tag"`
 }
 
 type Engine struct {
@@ -82,17 +82,38 @@ func Load(path string) (*Config, error) {
 	if c.ProjectDir == "" {
 		c.ProjectDir = "."
 	}
-	if c.Image.Containerfile == "" {
-		c.Image.Containerfile = "Containerfile"
-	}
-	if c.Image.Tag == "" {
-		c.Image.Tag = "airlock:" + sanitizeTag(c.Name)
-	}
-	// If user didn't specify build and Containerfile exists, assume build=true.
-	if !fieldMentioned(b, "build") {
-		if _, statErr := os.Stat(c.Image.Containerfile); statErr == nil {
-			c.Image.Build = true
+
+	// If neither image nor build is set, try to default to build if Containerfile exists
+	if c.Image == "" && c.Build == nil {
+		if _, err := os.Stat("Containerfile"); err == nil {
+			c.Build = &BuildConfig{
+				Context:       ".",
+				Containerfile: "Containerfile",
+			}
+		} else if _, err := os.Stat("example/Containerfile"); err == nil {
+			// Special case for the example in the repo if run from root
+			c.Build = &BuildConfig{
+				Context:       "./example",
+				Containerfile: "./example/Containerfile",
+			}
 		}
+	}
+
+	if c.Build != nil {
+		if c.Build.Context == "" {
+			c.Build.Context = "."
+		}
+		if c.Build.Containerfile == "" {
+			c.Build.Containerfile = "Containerfile"
+		}
+		if c.Build.Tag == "" {
+			c.Build.Tag = "airlock:" + sanitizeTag(c.Name)
+		}
+	}
+
+	if c.Image == "" && c.Build == nil {
+		// Fallback default image if nothing else
+		c.Image = "ghcr.io/donjaime/airlock-base:latest"
 	}
 
 	if c.Mounts.Workdir == "" {
@@ -169,9 +190,14 @@ projectDir: .
 engine:
   preferred: podman # or docker, or omit
 
-image:
-  containerfile: Containerfile
-  build: true
+# The sandbox container image to run.
+# You can either point at a prebuilt image OR provide a build section in place of image.
+# image: ghcr.io/your-org/airlock-dev:latest
+
+# If build is set, Airlock will build and tag an image for this project.
+build:
+  context: ./example
+  containerfile: ./example/Containerfile
   tag: airlock:my-project
 
 mounts:
