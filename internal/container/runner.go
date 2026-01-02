@@ -74,7 +74,7 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 }
 
 func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir string, env []string) error {
-	args := []string{"exec", "-it"}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -83,7 +83,7 @@ func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir st
 }
 
 func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir string, env []string, cmd []string) error {
-	args := []string{"exec", "-it"}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -164,11 +164,12 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 	name := containerName(cfg)
 	workdir := cfg.Workdir
 
+	home := cfg.User.Home
 	envArgs := []string{
-		"-e", "HOME=/home/agent",
-		"-e", "XDG_CACHE_HOME=/home/agent/.cache",
-		"-e", "XDG_CONFIG_HOME=/home/agent/.config",
-		"-e", "XDG_DATA_HOME=/home/agent/.local/share",
+		"-e", "HOME=" + home,
+		"-e", "XDG_CACHE_HOME=" + home + "/.cache",
+		"-e", "XDG_CONFIG_HOME=" + home + "/.config",
+		"-e", "XDG_DATA_HOME=" + home + "/.local/share",
 		"-e", "WORKDIR=" + workdir,
 	}
 	for k, v := range cfg.Env.Vars {
@@ -176,13 +177,16 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 	}
 
 	mountArgs := []string{
-		"-v", absProjectDir + ":" + workdir + ":Z",
-		"-v", homeHost + ":/home/agent:Z",
-		"-v", cacheHost + ":/home/agent/.cache:Z",
+		"-v", homeHost + ":" + home + ":Z",
+		"-v", cacheHost + ":" + home + "/.cache:Z",
 	}
 
+	workdirMounted := false
 	for _, m := range cfg.Mounts {
 		src := resolveHostPath(absProjectDir, m.Source)
+		if m.Target == workdir {
+			workdirMounted = true
+		}
 		mode := m.Mode
 		if mode == "" {
 			mode = "rw"
@@ -191,10 +195,15 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 		mountArgs = append(mountArgs, "-v", fmt.Sprintf("%s:%s:%s,Z", src, m.Target, mode))
 	}
 
+	if !workdirMounted {
+		mountArgs = append([]string{"-v", absProjectDir + ":" + workdir + ":Z"}, mountArgs...)
+	}
+
 	args := []string{
 		"run", "-d",
 		"--name", name,
 		"-w", workdir,
+		"--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID),
 	}
 	args = append(args, envArgs...)
 	args = append(args, mountArgs...)

@@ -145,6 +145,15 @@ mounts:
   #   target: /host-cache/pip
   #   mode: rw
 
+# Who you are when you exec into the container.
+# This needs to align with what the containerfile sets up.
+# Adding sensible defaults for ubuntu based containers.
+user:
+  name: ubuntu
+  uid: 1000
+  gid: 1000
+  home: /home/ubuntu
+
 # Environment variables to set inside the container.
 env:
   # Standard: keep tools pointed at the mounted workspace.
@@ -274,6 +283,25 @@ The working directory inside the container after it starts.
 Typically:
 
 * `workdir: /workspace`
+
+### `user`
+
+Configures the user that Airlock uses when running or entering the container. This must align with the user setup in your `Dockerfile`/`Containerfile`.
+
+* `name`: The username (informational, used in some defaults).
+* `uid`: The Numeric User ID (e.g., `1000`).
+* `gid`: The Numeric Group ID (e.g., `1000`).
+* `home`: The home directory path inside the container (e.g., `/home/ubuntu`).
+
+Example:
+
+```yaml
+user:
+  name: ubuntu
+  uid: 1000
+  gid: 1000
+  home: /home/ubuntu
+```
 
 ### `runtime`
 

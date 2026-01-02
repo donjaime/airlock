@@ -19,8 +19,15 @@ type Config struct {
 	CacheDir   string       `yaml:"cache"`
 	Mounts     []Mount      `yaml:"mounts"`
 	Env        Env          `yaml:"env"`
-	Agent      Agent        `yaml:"agent"`
+	User       UserConfig   `yaml:"user"`
 	Workdir    string       `yaml:"workdir"`
+}
+
+type UserConfig struct {
+	Name string `yaml:"name"`
+	UID  int    `yaml:"uid"`
+	GID  int    `yaml:"gid"`
+	Home string `yaml:"home"`
 }
 
 type BuildConfig struct {
@@ -41,10 +48,6 @@ type Mount struct {
 
 type Env struct {
 	Vars map[string]string `yaml:"vars"`
-}
-
-type Agent struct {
-	InstallClaudeCode bool `yaml:"installClaudeCode"` // default true
 }
 
 func Load(path string) (*Config, error) {
@@ -132,9 +135,21 @@ func Load(path string) (*Config, error) {
 	if c.Env.Vars == nil {
 		c.Env.Vars = map[string]string{}
 	}
-	if !fieldWasExplicitlyFalse(b, "installClaudeCode") {
-		c.Agent.InstallClaudeCode = true
+
+	// Default user if not specified
+	if c.User.Name == "" {
+		c.User.Name = "agent"
 	}
+	if c.User.UID == 0 {
+		c.User.UID = 1000
+	}
+	if c.User.GID == 0 {
+		c.User.GID = 1000
+	}
+	if c.User.Home == "" {
+		c.User.Home = "/home/agent"
+	}
+
 	if c.Name == "" {
 		return nil, errors.New("name is required (or inferable)")
 	}
@@ -218,6 +233,15 @@ mounts:
   - source: .
     target: /workspace
     mode: rw
+
+# Who you are when you exec into the container.
+# This needs to align with what the containerfile sets up.
+# Adding sensible defaults for ubuntu based containers.
+user:
+  name: ubuntu
+  uid: 1000
+  gid: 1000
+  home: /home/ubuntu
 
 env:
   vars:
