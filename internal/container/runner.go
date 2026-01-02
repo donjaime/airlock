@@ -205,6 +205,9 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 		"-w", workdir,
 		"--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID),
 	}
+	if r.Engine == EnginePodman {
+		args = append(args, "--userns=keep-id")
+	}
 	args = append(args, envArgs...)
 	args = append(args, mountArgs...)
 	args = append(args, "--hostname", "airlock")
