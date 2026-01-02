@@ -11,8 +11,8 @@ import (
 
 type Config struct {
 	Name       string       `yaml:"name"`
-	ProjectDir string       `yaml:"projectDir"`
-	WorkDir    string       `yaml:"workdir"` // defaults to "."
+	ProjectDir string       `yaml:"projectDir"` // Defaults to the config file path. Usually unset.
+	WorkDir    string       `yaml:"workdir"`    // defaults to "."
 	Image      string       `yaml:"image"`
 	Build      *BuildConfig `yaml:"build"`
 	Engine     string       `yaml:"engine"` // "podman" or "docker" or empty
@@ -68,12 +68,12 @@ func Load(path string) (*Config, error) {
 	}
 
 	// defaults
+	dir := filepath.Dir(path)
 	if c.Name == "" {
-		dir := filepath.Dir(path)
 		c.Name = filepath.Base(dir)
 	}
 	if c.ProjectDir == "" {
-		c.ProjectDir = "."
+		c.ProjectDir = dir
 	}
 	if c.WorkDir == "" {
 		c.WorkDir = "."
@@ -174,10 +174,8 @@ env:
 
 func defaultYAML() string {
 	return `name: my-project
-projectDir: .
 
-engine:
-  preferred: podman # or docker, or omit
+engine: podman # or docker, or omit
 
 # The sandbox container image to run.
 # You can either point at a prebuilt image OR provide a build section in place of image.
@@ -198,7 +196,7 @@ cache: ./.airlock/cache
 # home: ~/.local/share/airlock/home
 # cache: ~/.local/share/airlock/cache
 
-workdir: /workspace
+workdir: .
 
 mounts:
   - source: .

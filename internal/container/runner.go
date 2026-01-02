@@ -14,10 +14,11 @@ import (
 )
 
 type UserConfig struct {
-	Name string
-	UID  int
-	GID  int
-	Home string
+	Name    string
+	UID     int
+	GID     int
+	Home    string
+	WorkDir string
 }
 
 type Runner struct {
@@ -30,6 +31,7 @@ func NewRunner(e Engine) *Runner { return &Runner{Engine: e} }
 func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir string) (string, error) {
 	homeHost := resolveHostPath(absProjectDir, cfg.HomeDir)
 	cacheHost := resolveHostPath(absProjectDir, cfg.CacheDir)
+	workDirHost := resolveHostPath(absProjectDir, cfg.WorkDir)
 
 	image := cfg.Image
 	if cfg.Build != nil {
@@ -42,7 +44,7 @@ func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir str
 		"projectDir: " + absProjectDir,
 		"containerName: " + containerName(cfg),
 		"image: " + image,
-		"workdir: " + cfg.WorkDir,
+		"workHostDir: " + workDirHost,
 		"homeHostDir: " + homeHost,
 		"cacheHostDir: " + cacheHost,
 	}
@@ -61,19 +63,14 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 		image = cfg.Build.Tag
 	}
 
-	userConfig, workdir, err := r.inspectImage(ctx, image)
+	userConfig, err := r.inspectImage(ctx, image)
 	if err != nil {
 		return err
 	}
 
-	if cfg.WorkDir == "." || cfg.WorkDir == "" {
-		if workdir != "" {
-			cfg.WorkDir = workdir
-		}
-	}
-
 	homeHost := resolveHostPath(absProjectDir, cfg.HomeDir)
 	cacheHost := resolveHostPath(absProjectDir, cfg.CacheDir)
+	workDirHost := resolveHostPath(absProjectDir, cfg.WorkDir)
 	if err := os.MkdirAll(homeHost, 0700); err != nil {
 		return err
 	}
@@ -86,7 +83,7 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 		return err
 	}
 	if !exists {
-		if err := r.createContainer(ctx, cfg, userConfig, absProjectDir, homeHost, cacheHost); err != nil {
+		if err := r.createContainer(ctx, cfg, userConfig, absProjectDir, homeHost, cacheHost, workDirHost); err != nil {
 			return err
 		}
 	}
@@ -106,11 +103,11 @@ func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir st
 	if cfg.Build != nil {
 		image = cfg.Build.Tag
 	}
-	u, _, err := r.inspectImage(ctx, image)
+	userConfig, err := r.inspectImage(ctx, image)
 	if err != nil {
 		return err
 	}
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", u.UID, u.GID)}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", userConfig.UID, userConfig.GID)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -123,11 +120,11 @@ func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir str
 	if cfg.Build != nil {
 		image = cfg.Build.Tag
 	}
-	u, _, err := r.inspectImage(ctx, image)
+	userConfig, err := r.inspectImage(ctx, image)
 	if err != nil {
 		return err
 	}
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", u.UID, u.GID)}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", userConfig.UID, userConfig.GID)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -191,14 +188,14 @@ func (r *Runner) buildImage(ctx context.Context, cfg *config.Config, absProjectD
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
-func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, string, error) {
+func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, error) {
 	if r.Verbose {
 		fmt.Fprintf(os.Stderr, "+ %s image inspect %s\n", r.engineBin(), image)
 	}
 	cmd := exec.CommandContext(ctx, r.engineBin(), "image", "inspect", "--format", "json", image)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to inspect image %s: %w", image, err)
+		return nil, fmt.Errorf("failed to inspect image %s: %w", image, err)
 	}
 
 	var data []struct {
@@ -208,11 +205,11 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, s
 		} `json:"Config"`
 	}
 	if err := json.Unmarshal(out, &data); err != nil {
-		return nil, "", fmt.Errorf("failed to parse image inspect output: %w", err)
+		return nil, fmt.Errorf("failed to parse image inspect output: %w", err)
 	}
 
 	if len(data) == 0 {
-		return nil, "", fmt.Errorf("no data returned from image inspect %s", image)
+		return nil, fmt.Errorf("no data returned from image inspect %s", image)
 	}
 
 	userStr := data[0].Config.User
@@ -223,7 +220,7 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, s
 		userStr = "0:0"
 	}
 
-	u := &UserConfig{}
+	u := &UserConfig{WorkDir: workdir}
 	parts := strings.Split(userStr, ":")
 	if len(parts) == 1 {
 		// Could be name or UID
@@ -254,8 +251,7 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, s
 	} else {
 		u.Home = fmt.Sprintf("/home/%d", u.UID)
 	}
-
-	return u, workdir, nil
+	return u, nil
 }
 
 func (r *Runner) containerExists(ctx context.Context, name string) (bool, error) {
@@ -280,9 +276,8 @@ func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error
 	return strings.TrimSpace(string(out)) == "true", nil
 }
 
-func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *UserConfig, absProjectDir, homeHost, cacheHost string) error {
+func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *UserConfig, absProjectDir, homeHost, cacheHost, workDirHost string) error {
 	name := containerName(cfg)
-	workdir := cfg.WorkDir
 
 	home := u.Home
 	envArgs := []string{
@@ -290,7 +285,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		"-e", "XDG_CACHE_HOME=" + home + "/.cache",
 		"-e", "XDG_CONFIG_HOME=" + home + "/.config",
 		"-e", "XDG_DATA_HOME=" + home + "/.local/share",
-		"-e", "WORKDIR=" + workdir,
+		"-e", "WORKDIR=" + u.WorkDir,
 	}
 	for k, v := range cfg.Env.Vars {
 		envArgs = append(envArgs, "-e", fmt.Sprintf("%s=%s", k, v))
@@ -304,7 +299,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 	workdirMounted := false
 	for _, m := range cfg.Mounts {
 		src := resolveHostPath(absProjectDir, m.Source)
-		if m.Target == workdir {
+		if m.Target == u.WorkDir {
 			workdirMounted = true
 		}
 		mode := m.Mode
@@ -316,13 +311,13 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 	}
 
 	if !workdirMounted {
-		mountArgs = append([]string{"-v", absProjectDir + ":" + workdir + ":Z"}, mountArgs...)
+		mountArgs = append([]string{"-v", workDirHost + ":" + u.WorkDir + ":Z"}, mountArgs...)
 	}
 
 	args := []string{
 		"run", "-d",
 		"--name", name,
-		"-w", workdir,
+		"-w", u.WorkDir,
 		"--user", fmt.Sprintf("%d:%d", u.UID, u.GID),
 	}
 	if r.Engine == EnginePodman {

@@ -18,13 +18,13 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `airlock v%s
 
 Usage:
-  airlock [--config path] <command> [args]
+  airlock [--config path] [-e var] [-v] <command> [args]
 
 Commands:
   init       Create airlock.yaml and .airlock/airlock.local.yaml (if missing) + ensure .airlock dirs + .gitignore entry
   up         Build (if needed) and create the airlock container (idempotent)
-  enter [-e var] Enter the airlock container (interactive shell)
-  exec [-e var]  Execute a command inside the airlock container
+  enter      Enter the airlock container (interactive shell)
+  exec       Execute a command inside the airlock container
   down [name]    Stop and remove the airlock container (keeps .airlock state dirs)
   list           List all running airlock containers
   info           Print detected engine, paths, and config
@@ -34,14 +34,166 @@ Commands:
 Examples:
   airlock init
   airlock up
-  airlock enter -e ANTHROPIC_API_KEY
-  airlock exec -e SOME_VAR -- git status
+  airlock -e ANTHROPIC_API_KEY enter
+  airlock -e SOME_VAR exec -- git status
   airlock down [container-name]
   airlock list
 
 Flags:
 `, version)
 	flag.PrintDefaults()
+}
+
+var (
+	configPath = flag.String("config", "", "Path to airlock.yaml (default: ./airlock.yaml or ./airlock.yml)")
+	verbose    = flag.Bool("v", false, "Enable verbose output (print underlying podman/docker commands)")
+	envVars    = stringSliceFlag("e", "Forward ambient environment variable into the container")
+)
+
+func init() {
+	flag.Usage = usage
+}
+
+func main() {
+	flag.Parse()
+
+	args := flag.Args()
+	if len(args) < 1 {
+		usage()
+		os.Exit(2)
+	}
+	cmd := args[0]
+	cmdArgs := args[1:]
+
+	ctx := context.Background()
+
+	switch cmd {
+	case "help":
+		usage()
+
+	case "version":
+		fmt.Println(version)
+
+	case "init":
+		if err := config.InitFiles("."); err != nil {
+			fmt.Fprintf(os.Stderr, "init error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Created airlock.yaml and .airlock/airlock.local.yaml (if missing), ensured .airlock dirs, and updated .gitignore.")
+
+	case "list":
+		eng, err := container.DetectEngine("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
+			os.Exit(1)
+		}
+		runner := container.NewRunner(eng)
+		runner.Verbose = *verbose
+		names, err := runner.List(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, name := range names {
+			fmt.Println(name)
+		}
+
+	case "down":
+		var target string
+		if len(cmdArgs) > 0 {
+			target = cmdArgs[0]
+		}
+
+		eng, err := container.DetectEngine("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
+			os.Exit(1)
+		}
+		runner := container.NewRunner(eng)
+		runner.Verbose = *verbose
+
+		var cfg *config.Config
+		if target == "" {
+			cfg, _, err = loadConfig(*configPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to load config: %v. Run: airlock init or provide a container name\n", err)
+				os.Exit(1)
+			}
+		}
+
+		if err := runner.Down(ctx, cfg, target); err != nil {
+			fmt.Fprintf(os.Stderr, "down error: %v\n", err)
+			os.Exit(1)
+		}
+
+	case "info", "up", "enter", "exec":
+		cfg, _, err := loadConfig(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to load config: %v. Run: airlock init\n", err)
+			os.Exit(1)
+		}
+
+		absProj, _ := filepath.Abs(cfg.ProjectDir)
+		eng, err := container.DetectEngine(cfg.Engine)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
+			os.Exit(1)
+		}
+
+		runner := container.NewRunner(eng)
+
+		switch cmd {
+		case "info":
+			runner.Verbose = *verbose
+			info, err := runner.Info(ctx, cfg, absProj)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "info error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(info)
+
+		case "up":
+			runner.Verbose = *verbose
+			if err := runner.Up(ctx, cfg, absProj); err != nil {
+				fmt.Fprintf(os.Stderr, "up error: %v\n", err)
+				os.Exit(1)
+			}
+
+		case "enter":
+			runner.Verbose = *verbose
+			if err := runner.Enter(ctx, cfg, absProj, envVars); err != nil {
+				fmt.Fprintf(os.Stderr, "enter error: %v\n", err)
+				os.Exit(1)
+			}
+
+		case "exec":
+			runner.Verbose = *verbose
+			if len(cmdArgs) == 0 {
+				fmt.Fprintln(os.Stderr, "exec requires a command, e.g. airlock exec -- ls -la")
+				os.Exit(2)
+			}
+			if cmdArgs[0] == "--" {
+				cmdArgs = cmdArgs[1:]
+			}
+			if err := runner.Up(ctx, cfg, absProj); err != nil {
+				fmt.Fprintf(os.Stderr, "up error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := runner.Exec(ctx, cfg, absProj, envVars, cmdArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "exec error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+	default:
+		if strings.HasPrefix(cmd, "-") {
+			usage()
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
+		usage()
+		os.Exit(2)
+	}
 }
 
 type stringSlice []string
@@ -55,127 +207,15 @@ func (s *stringSlice) Set(value string) error {
 	return nil
 }
 
-func main() {
-	var configPath string
-	var verbose bool
-	flag.StringVar(&configPath, "config", "", "Path to airlock.yaml (default: ./airlock.yaml or ./airlock.yml)")
-	flag.BoolVar(&verbose, "v", false, "Enable verbose output (print underlying podman/docker commands)")
-	flag.Usage = usage
-	flag.Parse()
+// Helper function to allow one-line assignment
+func stringSliceFlag(name string, usage string) []string {
+	var s stringSlice
+	flag.Var(&s, name, usage)
+	return s
+}
 
-	args := flag.Args()
-	if len(args) < 1 {
-		usage()
-		os.Exit(2)
-	}
-	cmd := args[0]
-	cmdArgs := args[1:]
-
-	// Define command-specific flags
-	enterFlags := flag.NewFlagSet("enter", flag.ExitOnError)
-	var enterEnv stringSlice
-	enterFlags.Var(&enterEnv, "e", "Forward ambient environment variable into the container")
-	enterFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
-
-	execFlags := flag.NewFlagSet("exec", flag.ExitOnError)
-	var execEnv stringSlice
-	execFlags.Var(&execEnv, "e", "Forward ambient environment variable into the container")
-	execFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
-
-	ctx := context.Background()
-
-	if cmd == "help" {
-		usage()
-		return
-	}
-
-	if cmd == "version" {
-		fmt.Println(version)
-		return
-	}
-
-	if cmd == "init" {
-		if err := config.InitFiles("."); err != nil {
-			fmt.Fprintf(os.Stderr, "init error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Created airlock.yaml and .airlock/airlock.local.yaml (if missing), ensured .airlock dirs, and updated .gitignore.")
-		return
-	}
-
-	if cmd == "list" {
-		listFlags := flag.NewFlagSet("list", flag.ExitOnError)
-		listFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
-		listFlags.Parse(cmdArgs)
-
-		eng, err := container.DetectEngine("")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
-			os.Exit(1)
-		}
-		runner := container.NewRunner(eng)
-		runner.Verbose = verbose
-		names, err := runner.List(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "list error: %v\n", err)
-			os.Exit(1)
-		}
-		for _, name := range names {
-			fmt.Println(name)
-		}
-		return
-	}
-
-	if cmd == "down" {
-		downFlags := flag.NewFlagSet("down", flag.ExitOnError)
-		downFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
-		downFlags.Parse(cmdArgs)
-		cmdArgs = downFlags.Args()
-
-		var target string
-		if len(cmdArgs) > 0 {
-			target = cmdArgs[0]
-		}
-
-		eng, err := container.DetectEngine("")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
-			os.Exit(1)
-		}
-		runner := container.NewRunner(eng)
-		runner.Verbose = verbose
-
-		var cfg *config.Config
-		if target == "" {
-			cfgFile := configPath
-			if cfgFile == "" {
-				for _, cand := range []string{"airlock.yaml", "airlock.yml"} {
-					if _, err := os.Stat(cand); err == nil {
-						cfgFile = cand
-						break
-					}
-				}
-			}
-			if cfgFile == "" {
-				fmt.Fprintln(os.Stderr, "No airlock.yaml found. Run: airlock init or provide a container name")
-				os.Exit(1)
-			}
-			cfg, err = config.Load(cfgFile)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if err := runner.Down(ctx, cfg, target); err != nil {
-			fmt.Fprintf(os.Stderr, "down error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Parse the config file.
-	cfgFile := configPath
+func loadConfig(path string) (*config.Config, string, error) {
+	cfgFile := path
 	if cfgFile == "" {
 		for _, cand := range []string{"airlock.yaml", "airlock.yml"} {
 			if _, err := os.Stat(cand); err == nil {
@@ -185,91 +225,12 @@ func main() {
 		}
 	}
 	if cfgFile == "" {
-		fmt.Fprintln(os.Stderr, "No airlock.yaml found. Run: airlock init")
-		os.Exit(1)
+		return nil, "", fmt.Errorf("no airlock.yaml found")
 	}
 
 	cfg, err := config.Load(cfgFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load config: %v\n", err)
-		os.Exit(1)
+		return nil, "", err
 	}
-
-	absProj, _ := filepath.Abs(cfg.ProjectDir)
-
-	eng, err := container.DetectEngine(cfg.Engine)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
-		os.Exit(1)
-	}
-
-	runner := container.NewRunner(eng)
-	runner.Verbose = verbose
-
-	switch cmd {
-	case "info":
-		infoFlags := flag.NewFlagSet("info", flag.ExitOnError)
-		infoFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
-		infoFlags.Parse(cmdArgs)
-		runner.Verbose = verbose
-
-		info, err := runner.Info(ctx, cfg, absProj)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "info error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println(info)
-		return
-
-	case "up":
-		upFlags := flag.NewFlagSet("up", flag.ExitOnError)
-		upFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
-		upFlags.Parse(cmdArgs)
-		runner.Verbose = verbose
-
-		if err := runner.Up(ctx, cfg, absProj); err != nil {
-			fmt.Fprintf(os.Stderr, "up error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-
-	case "enter":
-		enterFlags.Parse(cmdArgs)
-		runner.Verbose = verbose
-		if err := runner.Enter(ctx, cfg, absProj, enterEnv); err != nil {
-			fmt.Fprintf(os.Stderr, "enter error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-
-	case "exec":
-		execFlags.Parse(cmdArgs)
-		runner.Verbose = verbose
-		cmdArgs = execFlags.Args()
-		if len(cmdArgs) == 0 {
-			fmt.Fprintln(os.Stderr, "exec requires a command, e.g. airlock exec -- ls -la")
-			os.Exit(2)
-		}
-		if cmdArgs[0] == "--" {
-			cmdArgs = cmdArgs[1:]
-		}
-		if err := runner.Up(ctx, cfg, absProj); err != nil {
-			fmt.Fprintf(os.Stderr, "up error: %v\n", err)
-			os.Exit(1)
-		}
-		if err := runner.Exec(ctx, cfg, absProj, execEnv, cmdArgs); err != nil {
-			fmt.Fprintf(os.Stderr, "exec error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-
-	default:
-		if strings.HasPrefix(cmd, "-") {
-			usage()
-			os.Exit(2)
-		}
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
-		usage()
-		os.Exit(2)
-	}
+	return cfg, cfgFile, nil
 }
