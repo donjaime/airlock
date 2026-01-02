@@ -20,10 +20,10 @@ type Config struct {
 }
 
 type Image struct {
-	BaseImage  string `yaml:"baseImage"`  // optional if building locally from Dockerfile
-	Dockerfile string `yaml:"dockerfile"` // default: "./Dockerfile"
-	Build      bool   `yaml:"build"`      // default true if Dockerfile exists (unless explicitly set)
-	Tag        string `yaml:"tag"`        // default: airlock:<name>
+	BaseImage     string `yaml:"baseImage"`     // optional if building locally from Containerfile
+	Containerfile string `yaml:"containerfile"` // default: "./Containerfile"
+	Build         bool   `yaml:"build"`         // default true if Containerfile exists (unless explicitly set)
+	Tag           string `yaml:"tag"`           // default: airlock:<name>
 }
 
 type Engine struct {
@@ -82,15 +82,15 @@ func Load(path string) (*Config, error) {
 	if c.ProjectDir == "" {
 		c.ProjectDir = "."
 	}
-	if c.Image.Dockerfile == "" {
-		c.Image.Dockerfile = "Dockerfile"
+	if c.Image.Containerfile == "" {
+		c.Image.Containerfile = "Containerfile"
 	}
 	if c.Image.Tag == "" {
 		c.Image.Tag = "airlock:" + sanitizeTag(c.Name)
 	}
-	// If user didn't specify build and Dockerfile exists, assume build=true.
+	// If user didn't specify build and Containerfile exists, assume build=true.
 	if !fieldMentioned(b, "build") {
-		if _, statErr := os.Stat(c.Image.Dockerfile); statErr == nil {
+		if _, statErr := os.Stat(c.Image.Containerfile); statErr == nil {
 			c.Image.Build = true
 		}
 	}
@@ -170,7 +170,7 @@ engine:
   preferred: podman # or docker, or omit
 
 image:
-  dockerfile: Dockerfile
+  containerfile: Containerfile
   build: true
   tag: airlock:my-project
 

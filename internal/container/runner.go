@@ -101,7 +101,7 @@ func (r *Runner) engineBin() string {
 }
 
 func (r *Runner) buildImage(ctx context.Context, cfg *config.Config, absProjectDir string) error {
-	df := cfg.Image.Dockerfile
+	df := cfg.Image.Containerfile
 	if !filepath.IsAbs(df) {
 		df = filepath.Join(absProjectDir, df)
 	}
