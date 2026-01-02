@@ -11,33 +11,21 @@ import (
 
 type Config struct {
 	Name       string       `yaml:"name"`
-	ProjectDir string       `yaml:"projectDir"` // defaults to "."
+	ProjectDir string       `yaml:"projectDir"`
+	WorkDir    string       `yaml:"workdir"` // defaults to "."
 	Image      string       `yaml:"image"`
 	Build      *BuildConfig `yaml:"build"`
-	Engine     Engine       `yaml:"engine"`
+	Engine     string       `yaml:"engine"` // "podman" or "docker" or empty
 	HomeDir    string       `yaml:"home"`
 	CacheDir   string       `yaml:"cache"`
 	Mounts     []Mount      `yaml:"mounts"`
 	Env        Env          `yaml:"env"`
-	User       UserConfig   `yaml:"user"`
-	Workdir    string       `yaml:"workdir"`
-}
-
-type UserConfig struct {
-	Name string `yaml:"name"`
-	UID  int    `yaml:"uid"`
-	GID  int    `yaml:"gid"`
-	Home string `yaml:"home"`
 }
 
 type BuildConfig struct {
 	Context       string `yaml:"context"`
 	Containerfile string `yaml:"containerfile"`
 	Tag           string `yaml:"tag"`
-}
-
-type Engine struct {
-	Preferred string `yaml:"preferred"` // "podman" or "docker" or empty
 }
 
 type Mount struct {
@@ -62,7 +50,6 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Try to load .airlock/airlock.local.yaml relative to the config file or project root
-	// The README says ./.airlock/airlock.local.yaml
 	localPath := filepath.Join(filepath.Dir(path), ".airlock", "airlock.local.yaml")
 	if _, err := os.Stat(localPath); err == nil {
 		lb, err := os.ReadFile(localPath)
@@ -88,6 +75,13 @@ func Load(path string) (*Config, error) {
 	if c.ProjectDir == "" {
 		c.ProjectDir = "."
 	}
+	if c.WorkDir == "" {
+		c.WorkDir = "."
+	}
+
+	if c.Image != "" && c.Build != nil {
+		return nil, errors.New("Only one of either Image or Build can be configured")
+	}
 
 	// If neither image nor build is set, try to default to build if Containerfile exists
 	if c.Image == "" && c.Build == nil {
@@ -96,11 +90,10 @@ func Load(path string) (*Config, error) {
 				Context:       ".",
 				Containerfile: "Containerfile",
 			}
-		} else if _, err := os.Stat("example/Containerfile"); err == nil {
-			// Special case for the example in the repo if run from root
+		} else if _, err := os.Stat("env/Containerfile"); err == nil {
 			c.Build = &BuildConfig{
-				Context:       "./example",
-				Containerfile: "./example/Containerfile",
+				Context:       "./env",
+				Containerfile: "./env/Containerfile",
 			}
 		}
 	}
@@ -117,14 +110,6 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	if c.Image == "" && c.Build == nil {
-		// Fallback default image if nothing else
-		c.Image = "ghcr.io/donjaime/airlock-base:latest"
-	}
-
-	if c.Workdir == "" {
-		c.Workdir = "/workspace"
-	}
 	if c.HomeDir == "" {
 		c.HomeDir = "./.airlock/home"
 	}
@@ -136,22 +121,8 @@ func Load(path string) (*Config, error) {
 		c.Env.Vars = map[string]string{}
 	}
 
-	// Default user if not specified
-	if c.User.Name == "" {
-		c.User.Name = "agent"
-	}
-	if c.User.UID == 0 {
-		c.User.UID = 1000
-	}
-	if c.User.GID == 0 {
-		c.User.GID = 1000
-	}
-	if c.User.Home == "" {
-		c.User.Home = "/home/agent"
-	}
-
 	if c.Name == "" {
-		return nil, errors.New("name is required (or inferable)")
+		return nil, errors.New("name is required")
 	}
 	return &c, nil
 }
@@ -214,8 +185,8 @@ engine:
 
 # If build is set, Airlock will build and tag an image for this project.
 build:
-  context: ./example
-  containerfile: ./example/Containerfile
+  context: .
+  containerfile: ./Containerfile
   tag: airlock:my-project
 
 # Host directories that back the sandbox HOME and cache.
@@ -234,21 +205,9 @@ mounts:
     target: /workspace
     mode: rw
 
-# Who you are when you exec into the container.
-# This needs to align with what the containerfile sets up.
-# Adding sensible defaults for ubuntu based containers.
-user:
-  name: ubuntu
-  uid: 1000
-  gid: 1000
-  home: /home/ubuntu
-
 env:
   vars:
     EXAMPLE_VAR: "hello"
-
-agent:
-  installClaudeCode: true
 `
 }
 

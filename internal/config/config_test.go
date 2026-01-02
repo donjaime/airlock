@@ -193,8 +193,8 @@ mounts:
 	if cfg.CacheDir != "./.airlock/mycache" {
 		t.Errorf("expected cache ./.airlock/mycache, got %s", cfg.CacheDir)
 	}
-	if cfg.Workdir != "/myworkspace" {
-		t.Errorf("expected workdir /myworkspace, got %s", cfg.Workdir)
+	if cfg.WorkDir != "/myworkspace" {
+		t.Errorf("expected workdir /myworkspace, got %s", cfg.WorkDir)
 	}
 	if len(cfg.Mounts) != 1 {
 		t.Fatalf("expected 1 mount, got %d", len(cfg.Mounts))
@@ -207,77 +207,5 @@ mounts:
 	}
 	if cfg.Mounts[0].Mode != "ro" {
 		t.Errorf("expected mount mode ro, got %s", cfg.Mounts[0].Mode)
-	}
-}
-
-func TestLoadWithUser(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "airlock-user-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfgPath := filepath.Join(tmpDir, "airlock.yaml")
-	yaml := `name: user-project
-user:
-  name: testuser
-  uid: 2000
-  gid: 2000
-  home: /home/testuser
-`
-	err = os.WriteFile(cfgPath, []byte(yaml), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	if cfg.User.Name != "testuser" {
-		t.Errorf("expected user testuser, got %s", cfg.User.Name)
-	}
-	if cfg.User.UID != 2000 {
-		t.Errorf("expected uid 2000, got %d", cfg.User.UID)
-	}
-	if cfg.User.GID != 2000 {
-		t.Errorf("expected gid 2000, got %d", cfg.User.GID)
-	}
-	if cfg.User.Home != "/home/testuser" {
-		t.Errorf("expected home /home/testuser, got %s", cfg.User.Home)
-	}
-}
-
-func TestLoadWithUserDefaults(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "airlock-user-defaults-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	cfgPath := filepath.Join(tmpDir, "airlock.yaml")
-	yaml := `name: user-defaults-project`
-	err = os.WriteFile(cfgPath, []byte(yaml), 0644)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := Load(cfgPath)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-
-	if cfg.User.Name != "agent" {
-		t.Errorf("expected default user agent, got %s", cfg.User.Name)
-	}
-	if cfg.User.UID != 1000 {
-		t.Errorf("expected default uid 1000, got %d", cfg.User.UID)
-	}
-	if cfg.User.GID != 1000 {
-		t.Errorf("expected default gid 1000, got %d", cfg.User.GID)
-	}
-	if cfg.User.Home != "/home/agent" {
-		t.Errorf("expected default home /home/agent, got %s", cfg.User.Home)
 	}
 }

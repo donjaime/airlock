@@ -2,17 +2,27 @@ package container
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/donjaime/airlock/internal/config"
 )
 
+type UserConfig struct {
+	Name string
+	UID  int
+	GID  int
+	Home string
+}
+
 type Runner struct {
-	Engine Engine
+	Engine  Engine
+	Verbose bool
 }
 
 func NewRunner(e Engine) *Runner { return &Runner{Engine: e} }
@@ -32,7 +42,7 @@ func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir str
 		"projectDir: " + absProjectDir,
 		"containerName: " + containerName(cfg),
 		"image: " + image,
-		"workdir: " + cfg.Workdir,
+		"workdir: " + cfg.WorkDir,
 		"homeHostDir: " + homeHost,
 		"cacheHostDir: " + cacheHost,
 	}
@@ -43,6 +53,22 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 	if cfg.Build != nil {
 		if err := r.buildImage(ctx, cfg, absProjectDir); err != nil {
 			return err
+		}
+	}
+
+	image := cfg.Image
+	if cfg.Build != nil {
+		image = cfg.Build.Tag
+	}
+
+	userConfig, workdir, err := r.inspectImage(ctx, image)
+	if err != nil {
+		return err
+	}
+
+	if cfg.WorkDir == "." || cfg.WorkDir == "" {
+		if workdir != "" {
+			cfg.WorkDir = workdir
 		}
 	}
 
@@ -60,7 +86,9 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 		return err
 	}
 	if !exists {
-		return r.createContainer(ctx, cfg, absProjectDir, homeHost, cacheHost)
+		if err := r.createContainer(ctx, cfg, userConfig, absProjectDir, homeHost, cacheHost); err != nil {
+			return err
+		}
 	}
 
 	running, err := r.containerRunning(ctx, containerName(cfg))
@@ -74,7 +102,15 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 }
 
 func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir string, env []string) error {
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID)}
+	image := cfg.Image
+	if cfg.Build != nil {
+		image = cfg.Build.Tag
+	}
+	u, _, err := r.inspectImage(ctx, image)
+	if err != nil {
+		return err
+	}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", u.UID, u.GID)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -83,7 +119,15 @@ func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir st
 }
 
 func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir string, env []string, cmd []string) error {
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID)}
+	image := cfg.Image
+	if cfg.Build != nil {
+		image = cfg.Build.Tag
+	}
+	u, _, err := r.inspectImage(ctx, image)
+	if err != nil {
+		return err
+	}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", u.UID, u.GID)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -108,6 +152,9 @@ func (r *Runner) List(ctx context.Context) ([]string, error) {
 	// We use --filter name=^airlock- to match containers starting with airlock-
 	// Both podman and docker support this.
 	// We don't use -a because the requirement is to show "running" containers.
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s %s\n", r.engineBin(), strings.Join([]string{"ps", "--filter", "name=^airlock-", "--format", "{{.Names}}"}, " "))
+	}
 	cmd := exec.CommandContext(ctx, r.engineBin(), "ps", "--filter", "name=^airlock-", "--format", "{{.Names}}")
 	out, err := cmd.Output()
 	if err != nil {
@@ -144,7 +191,77 @@ func (r *Runner) buildImage(ctx context.Context, cfg *config.Config, absProjectD
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
+func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, string, error) {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s image inspect %s\n", r.engineBin(), image)
+	}
+	cmd := exec.CommandContext(ctx, r.engineBin(), "image", "inspect", "--format", "json", image)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to inspect image %s: %w", image, err)
+	}
+
+	var data []struct {
+		Config struct {
+			User       string `json:"User"`
+			WorkingDir string `json:"WorkingDir"`
+		} `json:"Config"`
+	}
+	if err := json.Unmarshal(out, &data); err != nil {
+		return nil, "", fmt.Errorf("failed to parse image inspect output: %w", err)
+	}
+
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("no data returned from image inspect %s", image)
+	}
+
+	userStr := data[0].Config.User
+	workdir := data[0].Config.WorkingDir
+
+	// Default to root if not specified
+	if userStr == "" {
+		userStr = "0:0"
+	}
+
+	u := &UserConfig{}
+	parts := strings.Split(userStr, ":")
+	if len(parts) == 1 {
+		// Could be name or UID
+		if uid, err := strconv.Atoi(parts[0]); err == nil {
+			u.UID = uid
+			u.GID = uid // default GID to UID if only UID provided? Or 0?
+		} else {
+			u.Name = parts[0]
+		}
+	} else if len(parts) == 2 {
+		uid, _ := strconv.Atoi(parts[0])
+		gid, _ := strconv.Atoi(parts[1])
+		u.UID = uid
+		u.GID = gid
+	}
+
+	// Now we need to find the home directory. This is tricky because it depends on the user inside the container.
+	// Common convention is /home/username or /root.
+	// If we have a username but not UID/GID, we might need to look it up in the image (e.g. /etc/passwd).
+	// For now, let's make some assumptions or try to find it.
+	if u.UID == 0 && u.Name == "" {
+		u.Name = "root"
+	}
+	if u.Name == "root" || u.UID == 0 {
+		u.Home = "/root"
+	} else if u.Name != "" {
+		u.Home = "/home/" + u.Name
+	} else {
+		u.Home = fmt.Sprintf("/home/%d", u.UID)
+	}
+
+	return u, workdir, nil
+}
+
 func (r *Runner) containerExists(ctx context.Context, name string) (bool, error) {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s container inspect %s\n", r.engineBin(), name)
+	}
 	cmd := exec.CommandContext(ctx, r.engineBin(), "container", "inspect", name)
 	if err := cmd.Run(); err != nil {
 		return false, nil
@@ -153,6 +270,9 @@ func (r *Runner) containerExists(ctx context.Context, name string) (bool, error)
 }
 
 func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error) {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s inspect -f {{.State.Running}} %s\n", r.engineBin(), name)
+	}
 	out, err := exec.CommandContext(ctx, r.engineBin(), "inspect", "-f", "{{.State.Running}}", name).CombinedOutput()
 	if err != nil {
 		return false, nil
@@ -160,11 +280,11 @@ func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error
 	return strings.TrimSpace(string(out)) == "true", nil
 }
 
-func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absProjectDir, homeHost, cacheHost string) error {
+func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *UserConfig, absProjectDir, homeHost, cacheHost string) error {
 	name := containerName(cfg)
-	workdir := cfg.Workdir
+	workdir := cfg.WorkDir
 
-	home := cfg.User.Home
+	home := u.Home
 	envArgs := []string{
 		"-e", "HOME=" + home,
 		"-e", "XDG_CACHE_HOME=" + home + "/.cache",
@@ -203,7 +323,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 		"run", "-d",
 		"--name", name,
 		"-w", workdir,
-		"--user", fmt.Sprintf("%d:%d", cfg.User.UID, cfg.User.GID),
+		"--user", fmt.Sprintf("%d:%d", u.UID, u.GID),
 	}
 	if r.Engine == EnginePodman {
 		args = append(args, "--userns=keep-id")
@@ -222,6 +342,9 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, absPro
 }
 
 func (r *Runner) runCmdInteractive(ctx context.Context, bin string, args ...string) error {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s %s\n", bin, strings.Join(args, " "))
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -19,21 +19,22 @@ Airlock separates **project home state** from **build/runtime caches**, while st
 ### Host layout (project-scoped)
 
 ```
-<Your Project Root>/
-  airlock.yaml # Version controlled project configuraton bootstrapped by `airlock init`
-  Dockerfile   # (Optional) Custom container image to bootstrap your dev environment
-  .gitignore   # Make sure to ignore `.airlock/` (which `airlock init` does automatically)
+<Your Airlocked Project Root>/
+  ...<Project Source Files and Folders>... # The stuff you want to work on
   
-  ... <Your Project source folder[s]> ...
-
-  .airlock/  # NOT version controlled
-    home/    # persistent project home (dotfiles, config, symlinked identities)
-    cache/   # persistent but disposable caches (npm, pip, go, etc.)
+  airlock.yaml    # Version controlled project configuraton bootstrapped by `airlock init`
+  Containerfile   # Custom container image to bootstrap your dev environment
+ 
+  .gitignore      # Make sure to ignore `.airlock/` (which `airlock init` does automatically)
+  .airlock/       # NOT version controlled
+    home/         # persistent project home (dotfiles, config, symlinked identities)
+    cache/        # persistent but disposable caches (npm, pip, go, etc.)
     airlock.local.yaml # Local-only environment vars and config. Not versioned.
 ```
 
+Everything in `.airlock/` is **local-only** and  not meant to be committed to version control.
 
-Everything in `.airlock/` is **local-only** and  not meant to be committed.
+> If you want to build a project or repo that is not "airlock aware", you can simply have one level of folder nesting where the airlock project root is above your project - treating the other project as a subproject. You are free to use git submodules or just symlinking things into place.  
 
 ---
 
@@ -122,8 +123,8 @@ version: 1
 
 # If build is set, Airlock will build and tag an image for this project.
 build:
-  context: ./example
-  containerfile: ./example/Containerfile
+  context: ./env
+  containerfile: ./env/Containerfile
   tag: airlock-myproject:dev
 
 # Project-scoped persistent directories (defaults shown).
@@ -144,15 +145,6 @@ mounts:
   # - source: ~/.cache/pip
   #   target: /host-cache/pip
   #   mode: rw
-
-# Who you are when you exec into the container.
-# This needs to align with what the containerfile sets up.
-# Adding sensible defaults for ubuntu based containers.
-user:
-  name: ubuntu
-  uid: 1000
-  gid: 1000
-  home: /home/ubuntu
 
 # Environment variables to set inside the container.
 env:
@@ -283,25 +275,6 @@ The working directory inside the container after it starts.
 Typically:
 
 * `workdir: /workspace`
-
-### `user`
-
-Configures the user that Airlock uses when running or entering the container. This must align with the user setup in your `Dockerfile`/`Containerfile`.
-
-* `name`: The username (informational, used in some defaults).
-* `uid`: The Numeric User ID (e.g., `1000`).
-* `gid`: The Numeric Group ID (e.g., `1000`).
-* `home`: The home directory path inside the container (e.g., `/home/ubuntu`).
-
-Example:
-
-```yaml
-user:
-  name: ubuntu
-  uid: 1000
-  gid: 1000
-  home: /home/ubuntu
-```
 
 ### `runtime`
 
@@ -636,5 +609,11 @@ npm install -g @anthropic-ai/claude-code
 ```
 
 ## License
-
 MIT
+
+
+## Future Work
+- **MacOS support**. Only tested on linux. 
+- **IDE support**. SDKs and libraries are often needed to power LSPs and refactoring. You could configure remote SSH manually, but that's clunky. On linux you can point the IDE at the stuff downloaded by the container in cache and home. But I think that might violate some of the desired isolation we want. 
+- **Identity management CLI tools**. Promote some of the patterns to CLI functions. Manual symlinking is clunky.
+- 

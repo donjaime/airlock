@@ -1,44 +1,9 @@
-name: my-project
-projectDir: .
-
-engine:
-  preferred: podman # or docker, or omit
-
-# The sandbox container image to run.
-# You can either point at a prebuilt image OR provide a build section in place of image.
-# image: ghcr.io/your-org/airlock-dev:latest
-
-# If build is set, Airlock will build and tag an image for this project.
+name: airlock
+engine: podman
 build:
-  context: ./example
-  containerfile: ./example/Containerfile
-  tag: airlock:my-project
+  context: .
+  containerfile: ./Containerfile
 
-# Host directories that back the sandbox HOME and cache.
-# Defaults are inside the repo for simplicity.
 home: ./.airlock/home
 cache: ./.airlock/cache
-
-# To reuse across projects, point these at shared host paths, e.g.:
-# home: ~/.local/share/airlock/home
-# cache: ~/.local/share/airlock/cache
-
-workdir: /workspace
-
-mounts:
-  - source: .
-    target: /workspace
-    mode: rw
-
-# Who you are when you exec into the container.
-# This needs to align with what the containerfile sets up.
-# Adding sensible defaults for ubuntu based containers.
-user:
-  name: ubuntu
-  uid: 1000
-  gid: 1000
-  home: /home/ubuntu
-
-env:
-  vars:
-    EXAMPLE_VAR: "hello"
+workDir: .

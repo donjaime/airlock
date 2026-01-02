@@ -1,0 +1,32 @@
+name: my-claude-project
+
+engine: podman # or docker, or omit
+
+# The sandbox container image to run.
+# You can either point at a prebuilt image OR provide a build section in place of image.
+#
+# image: ghcr.io/your-org/airlock-dev:latest
+
+# If build is set, Airlock will build and tag an image for this project.
+build:
+  context: .
+  containerfile: ./Containerfile
+
+# Host directories that back the sandbox HOME and cache.
+# Defaults are inside the repo for simplicity.
+home: ./.airlock/home
+cache: ./.airlock/cache
+
+# To reuse across projects, point these at shared host paths, e.g.:
+# home: ~/.local/share/airlock/home
+# cache: ~/.local/share/airlock/cache
+
+# Setup one or more mounts
+mounts:
+  - source: .
+    target: /workspace
+    mode: rw
+
+env:
+  vars:
+    EXAMPLE_VAR: "hello"

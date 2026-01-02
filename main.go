@@ -57,7 +57,9 @@ func (s *stringSlice) Set(value string) error {
 
 func main() {
 	var configPath string
+	var verbose bool
 	flag.StringVar(&configPath, "config", "", "Path to airlock.yaml (default: ./airlock.yaml or ./airlock.yml)")
+	flag.BoolVar(&verbose, "v", false, "Enable verbose output (print underlying podman/docker commands)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -73,15 +75,15 @@ func main() {
 	enterFlags := flag.NewFlagSet("enter", flag.ExitOnError)
 	var enterEnv stringSlice
 	enterFlags.Var(&enterEnv, "e", "Forward ambient environment variable into the container")
+	enterFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
 
 	execFlags := flag.NewFlagSet("exec", flag.ExitOnError)
 	var execEnv stringSlice
 	execFlags.Var(&execEnv, "e", "Forward ambient environment variable into the container")
+	execFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
 
 	ctx := context.Background()
 
-	// help, version, init, list and down don't depend on the config file being parsed.
-	// Handle them now.
 	if cmd == "help" {
 		usage()
 		return
@@ -102,12 +104,17 @@ func main() {
 	}
 
 	if cmd == "list" {
+		listFlags := flag.NewFlagSet("list", flag.ExitOnError)
+		listFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
+		listFlags.Parse(cmdArgs)
+
 		eng, err := container.DetectEngine("")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
 			os.Exit(1)
 		}
 		runner := container.NewRunner(eng)
+		runner.Verbose = verbose
 		names, err := runner.List(ctx)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "list error: %v\n", err)
@@ -120,6 +127,11 @@ func main() {
 	}
 
 	if cmd == "down" {
+		downFlags := flag.NewFlagSet("down", flag.ExitOnError)
+		downFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
+		downFlags.Parse(cmdArgs)
+		cmdArgs = downFlags.Args()
+
 		var target string
 		if len(cmdArgs) > 0 {
 			target = cmdArgs[0]
@@ -131,6 +143,7 @@ func main() {
 			os.Exit(1)
 		}
 		runner := container.NewRunner(eng)
+		runner.Verbose = verbose
 
 		var cfg *config.Config
 		if target == "" {
@@ -184,16 +197,22 @@ func main() {
 
 	absProj, _ := filepath.Abs(cfg.ProjectDir)
 
-	eng, err := container.DetectEngine(cfg.Engine.Preferred)
+	eng, err := container.DetectEngine(cfg.Engine)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
 		os.Exit(1)
 	}
 
 	runner := container.NewRunner(eng)
+	runner.Verbose = verbose
 
 	switch cmd {
 	case "info":
+		infoFlags := flag.NewFlagSet("info", flag.ExitOnError)
+		infoFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
+		infoFlags.Parse(cmdArgs)
+		runner.Verbose = verbose
+
 		info, err := runner.Info(ctx, cfg, absProj)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "info error: %v\n", err)
@@ -203,6 +222,11 @@ func main() {
 		return
 
 	case "up":
+		upFlags := flag.NewFlagSet("up", flag.ExitOnError)
+		upFlags.BoolVar(&verbose, "v", verbose, "Enable verbose output")
+		upFlags.Parse(cmdArgs)
+		runner.Verbose = verbose
+
 		if err := runner.Up(ctx, cfg, absProj); err != nil {
 			fmt.Fprintf(os.Stderr, "up error: %v\n", err)
 			os.Exit(1)
@@ -211,10 +235,7 @@ func main() {
 
 	case "enter":
 		enterFlags.Parse(cmdArgs)
-		if err := runner.Up(ctx, cfg, absProj); err != nil {
-			fmt.Fprintf(os.Stderr, "up error: %v\n", err)
-			os.Exit(1)
-		}
+		runner.Verbose = verbose
 		if err := runner.Enter(ctx, cfg, absProj, enterEnv); err != nil {
 			fmt.Fprintf(os.Stderr, "enter error: %v\n", err)
 			os.Exit(1)
@@ -223,6 +244,7 @@ func main() {
 
 	case "exec":
 		execFlags.Parse(cmdArgs)
+		runner.Verbose = verbose
 		cmdArgs = execFlags.Args()
 		if len(cmdArgs) == 0 {
 			fmt.Fprintln(os.Stderr, "exec requires a command, e.g. airlock exec -- ls -la")
