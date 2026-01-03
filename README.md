@@ -32,7 +32,7 @@ Airlock separates **project home state** from **build/runtime caches**, while st
     airlock.local.yaml # Local-only environment vars and config. Not versioned.
 ```
 
-Everything in `.airlock/` is **local-only** and  not meant to be committed to version control.
+Everything in `.airlock/` is **local-only**, not meant to be committed to version control, and is **masked** so it is inaccessible from within the container's workspace.
 
 > If you want to build a project or repo that is not "airlock aware", you can simply have one level of folder nesting where the airlock project root is above your project - treating the other project as a subproject. You are free to use git submodules or just symlinking things into place.  
 
@@ -46,8 +46,10 @@ Host                      Container
 ------------------------  ------------------------
 .airlock/home         →  /home/username         # this is the container user’s `$HOME`
 .airlock/cache        →  /home/username/.cache  # the conventional XDG cache location
-./                    →  /workspace             # the workdir for your project
+./                    →  /workspace             # project workdir (excluding .airlock/)
 ```
+
+> **Note:** The `.airlock/` folder is explicitly masked within the container. It is not accessible from `/workspace` even though it exists in the host project root. This ensures that tools running in the sandbox cannot accidentally modify or leak its own configuration and state.
 
 
 
@@ -495,7 +497,7 @@ Best practices:
 
 
 > **If it’s in `.airlock/home` (or one of the mounted folders), the container can see it.
-> If it’s not, it can’t.**
+> If it’s not, it can’t — and this includes the `.airlock/` folder itself within your project root, which is masked.**
 
 ---
 

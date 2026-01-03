@@ -314,6 +314,9 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		mountArgs = append([]string{"-v", workDirHost + ":" + u.WorkDir + ":Z"}, mountArgs...)
 	}
 
+	// Always hide .airlock folder from the working directory mount
+	mountArgs = append(mountArgs, "-v", u.WorkDir+"/.airlock")
+
 	args := []string{
 		"run", "-d",
 		"--name", name,
