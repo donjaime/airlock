@@ -345,6 +345,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 
 	args := []string{
 		"run", "-d",
+		"--init",
 		"--name", name,
 		"-w", u.WorkDir,
 		"--user", fmt.Sprintf("%s", u.Name),
@@ -360,7 +361,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		image = cfg.Build.Tag
 	}
 	args = append(args, image)
-	// args = append(args, "sleep", "infinity")
+	args = append(args, "sleep", "infinity")
 
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
