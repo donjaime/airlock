@@ -24,9 +24,8 @@ func TestLoadWithLocal(t *testing.T) {
 
 	mainYAML := `name: test-project
 env:
-  vars:
-    VAR1: "value1"
-    VAR2: "value2"
+  VAR1: "value1"
+  VAR2: "value2"
 `
 	err = os.WriteFile(cfgPath, []byte(mainYAML), 0644)
 	if err != nil {
@@ -34,7 +33,6 @@ env:
 	}
 
 	localYAML := `env:
-  vars:
     VAR2: "overridden"
     VAR3: "local-only"
 `
@@ -52,16 +50,16 @@ env:
 		t.Errorf("expected name test-project, got %s", cfg.Name)
 	}
 
-	if cfg.Env.Vars["VAR1"] != "value1" {
-		t.Errorf("expected VAR1=value1, got %s", cfg.Env.Vars["VAR1"])
+	if cfg.Env["VAR1"] != "value1" {
+		t.Errorf("expected VAR1=value1, got %s", cfg.Env["VAR1"])
 	}
 
-	if cfg.Env.Vars["VAR2"] != "overridden" {
-		t.Errorf("expected VAR2=overridden, got %s", cfg.Env.Vars["VAR2"])
+	if cfg.Env["VAR2"] != "overridden" {
+		t.Errorf("expected VAR2=overridden, got %s", cfg.Env["VAR2"])
 	}
 
-	if cfg.Env.Vars["VAR3"] != "local-only" {
-		t.Errorf("expected VAR3=local-only, got %s", cfg.Env.Vars["VAR3"])
+	if cfg.Env["VAR3"] != "local-only" {
+		t.Errorf("expected VAR3=local-only, got %s", cfg.Env["VAR3"])
 	}
 }
 

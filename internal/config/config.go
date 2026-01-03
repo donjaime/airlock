@@ -10,16 +10,16 @@ import (
 )
 
 type Config struct {
-	Name       string       `yaml:"name"`
-	ProjectDir string       `yaml:"projectDir"` // Defaults to the config file path. Usually unset.
-	WorkDir    string       `yaml:"workdir"`    // defaults to "."
-	Image      string       `yaml:"image"`
-	Build      *BuildConfig `yaml:"build"`
-	Engine     string       `yaml:"engine"` // "podman" or "docker" or empty
-	HomeDir    string       `yaml:"home"`
-	CacheDir   string       `yaml:"cache"`
-	Mounts     []Mount      `yaml:"mounts"`
-	Env        Env          `yaml:"env"`
+	Name       string            `yaml:"name"`
+	ProjectDir string            `yaml:"projectDir"` // (Override only) Defaults to the dir containing the config file. Usually unset.
+	WorkDir    string            `yaml:"workdir"`    // defaults to "."
+	Image      string            `yaml:"image"`
+	Build      *BuildConfig      `yaml:"build"`
+	Engine     string            `yaml:"engine"` // "podman" or "docker" or empty
+	HomeDir    string            `yaml:"home"`
+	CacheDir   string            `yaml:"cache"`
+	Mounts     []Mount           `yaml:"mounts"`
+	Env        map[string]string `yaml:"env"`
 }
 
 type BuildConfig struct {
@@ -32,10 +32,6 @@ type Mount struct {
 	Source string `yaml:"source"`
 	Target string `yaml:"target"`
 	Mode   string `yaml:"mode"` // "rw" or "ro"
-}
-
-type Env struct {
-	Vars map[string]string `yaml:"vars"`
 }
 
 func Load(path string) (*Config, error) {
@@ -117,8 +113,8 @@ func Load(path string) (*Config, error) {
 		c.CacheDir = "./.airlock/cache"
 	}
 
-	if c.Env.Vars == nil {
-		c.Env.Vars = map[string]string{}
+	if c.Env == nil {
+		c.Env = map[string]string{}
 	}
 
 	if c.Name == "" {
@@ -204,8 +200,7 @@ mounts:
     mode: rw
 
 env:
-  vars:
-    EXAMPLE_VAR: "hello"
+  - EXAMPLE_VAR: "hello"
 `
 }
 

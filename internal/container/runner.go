@@ -287,7 +287,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		"-e", "XDG_DATA_HOME=" + home + "/.local/share",
 		"-e", "WORKDIR=" + u.WorkDir,
 	}
-	for k, v := range cfg.Env.Vars {
+	for k, v := range cfg.Env {
 		envArgs = append(envArgs, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
 

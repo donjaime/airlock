@@ -6,4 +6,4 @@ build:
 
 home: ./.airlock/home
 cache: ./.airlock/cache
-workDir: .
+workdir: .

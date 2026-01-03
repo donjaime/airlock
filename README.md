@@ -36,39 +36,22 @@ Everything in `.airlock/` is **local-only** and  not meant to be committed to ve
 
 > If you want to build a project or repo that is not "airlock aware", you can simply have one level of folder nesting where the airlock project root is above your project - treating the other project as a subproject. You are free to use git submodules or just symlinking things into place.  
 
----
-
-## Container mapping (max compatibility)
-
-Inside the container, Airlock mounts these directories as follows:
-
-```
-Host                      Container
-------------------------  ------------------------
-.airlock/home         →  /home/ubuntu         # this is the container user’s `$HOME`
-.airlock/cache        →  /home/ubuntu/.cache  # the conventional XDG cache location
-```
-
-This design intentionally places the cache at `$HOME/.cache` **inside the container**, because most tools expect caches to live there by default.
-
-You may notice that a `.cache` directory appears under `.airlock/home` on the host when you run Airlock.
-
-This is expected.
-
-- `.airlock/home/.cache` is **only a mount point**
-
-- the **actual cache contents live in `.airlock/cache`**
-
-- the directory must exist so the container runtime can attach the mount
-
-
-> Seeing `.airlock/home/.cache` does **not** mean cache data is being stored inside your home directory.
 
 ---
 
 ## What goes where
 
-### `.airlock/home` (project home)
+```
+Host                      Container
+------------------------  ------------------------
+.airlock/home         →  /home/username         # this is the container user’s `$HOME`
+.airlock/cache        →  /home/username/.cache  # the conventional XDG cache location
+./                    →  /workspace             # the workdir for your project
+```
+
+
+
+### `.airlock/home`
 
 Persistent **user state**, such as:
 
@@ -99,7 +82,9 @@ You should feel safe deleting this at any time to reclaim space or fix cache iss
 
 > **Recommended:** If you want to clear caches, delete **`.airlock/cache`**, not `.airlock/home/.cache`.
 
-## `airlock.yaml` (project configuration)
+> **Note:** Seeing `.airlock/home/.cache` does **not** mean cache data is being stored inside your home directory. `.cache` is just a mount point. The file live in the cache folder.
+
+## Project Configuration in `airlock.yaml` 
 
 `airlock.yaml` is a small, project-scoped config file that tells Airlock:
 
@@ -114,12 +99,13 @@ Airlock will **create and persist** project state under `.airlock/` by default.
 
 ```yaml
 # airlock.yaml
+name: myproject
 version: 1
+engine: podman   # or "docker" (Optional). Defaults to podman if omitted.
 
 # The sandbox container image to run.
 # You can either point at a prebuilt image OR provide a build section in place of image.
 # image: ghcr.io/your-org/airlock-dev:latest
-
 
 # If build is set, Airlock will build and tag an image for this project.
 build:
@@ -132,19 +118,29 @@ build:
 home: .airlock/home
 cache: .airlock/cache
 
-# Mounts bind host paths into the container.
-# Keep this minimal and explicit. Identities are typically symlinked
-# into `home` before entering (see "Identities" section).
+# To reuse across projects, point these at shared host paths, e.g.:
+# home: ~/.local/share/airlock/home
+# cache: ~/.local/share/airlock/cache
+
+# This is the folder we map from the host into the container's working directory. 
+workdir: .
+
+# Optional: Mounts bind host paths into the container.
 mounts:
-  # Mount the repo into the container (read/write).
-  - source: .
-    target: /workspace
+  - source: ../test_data
+    target: /test_data
     mode: rw
 
   # Optional: share a host-level package cache (speeds up installs).
   # - source: ~/.cache/pip
   #   target: /host-cache/pip
   #   mode: rw
+
+ports:
+  - host: 3000
+    container: 3000
+  - host: 54321
+    container: 5432
 
 # Environment variables to set inside the container.
 env:
@@ -156,26 +152,6 @@ env:
   
   # Additional env vars can be passed in via .airlock/airlock.local.yaml
   # You can pass local-only secrets via that file
-
-# What command to run when you "enter" the sandbox.
-# Defaults to an interactive shell if omitted.
-entrypoint:
-  cmd: ["/bin/bash", "-l"]
-
-# Where Airlock should set the container working directory at startup.
-workdir: /workspace
-
-ports:
-  - host: 3000
-    container: 3000
-  - host: 54321
-    container: 5432
-
-# Optional: runtime selection or arguments (kept intentionally simple).
-runtime:
-  engine: podman   # or "docker" (depending on what your implementation supports)
-  # extra_args:
-  #   - "--network=host"
 ```
 
 
@@ -183,11 +159,23 @@ runtime:
 
 ## What each field means
 
+### `name`
+
+The name of the project. This is used to tag the built image and name the containers.
+
+* Defaults to the name of the directory containing `airlock.yaml`.
+
 ### `version`
 
 A config version for forward compatibility.
 
 * `version: 1` is the current format.
+
+### `engine` (optional)
+
+The container engine to use.
+
+* Options: `podman` (default), `docker`.
 
 ### `image`
 
@@ -201,13 +189,19 @@ The container image Airlock should run.
 If present, Airlock builds an image for this project instead of pulling `image`.
 
 * `context`: build context directory (usually `.`)
-* `dockerfile`: path to Dockerfile/Containerfile
+* `containerfile`: path to Dockerfile/Containerfile (defaults to `Containerfile`)
 * `tag`: local image tag to build to
 
 Use `build` when:
 
 * you want project-specific tooling baked into the image,
 * you’re iterating on the container environment.
+
+### `workdir` (optional)
+
+The directory on the host that gets mapped into the container to be used as the initial working directory.
+
+* Defaults to `.` (the directory containing the config file).
 
 ### `home` and `cache`
 
@@ -238,51 +232,11 @@ Each mount has:
 * `target`: path inside the container
 * `mode`: `rw` or `ro`
 
-Recommended minimum mount:
-
-* mount the repo to `/workspace` as `rw`
-
-Example minimal mounts:
-
-```yaml
-mounts:
-  - source: .
-    target: /workspace
-    mode: rw
-```
 
 ### `env`
 
 Environment variables to set inside the container.
-
-Common use cases:
-
-* point tools at `/workspace`,
-* configure caches (prefer `.airlock/cache`),
-* set language/toolchain env vars.
-
-### `entrypoint`
-
-What runs when you do `airlock enter`.
-
-* `cmd` is an array (exec form), e.g. `["/bin/bash","-l"]`
-* If omitted, Airlock should default to a login shell.
-
-### `workdir`
-
-The working directory inside the container after it starts.
-
-Typically:
-
-* `workdir: /workspace`
-
-### `runtime`
-
-Keeps runtime selection simple.
-
-* `engine`: `podman` or `docker` (depending on your implementation)
-* `extra_args` (optional): passthrough flags to the runtime (keep this sparse)
-
+> For private vars see `.airlock/airlock.local.yaml`
 
 ### `ports`
 
@@ -295,8 +249,8 @@ Each entry has:
 
 ```yaml
 ports:
-  - host: <host-port>
-    container: <container-port>
+  - host: 3000
+    container: 3000
 ```
 
 You can define multiple services on the same container. For example:
@@ -311,9 +265,7 @@ ports:
     container: 9229   # Node inspector
 ```
 
-Under the hood, Airlock translates `ports` into the container runtime’s native flags:
-* Podman: `-p host:container`
-* Docker: `-p host:container`
+Under the hood, Airlock translates `ports` into the container runtime’s native flags (`-p host:container`).
 
 
 

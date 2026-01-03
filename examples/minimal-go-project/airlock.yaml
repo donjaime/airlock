@@ -1,5 +1,4 @@
-name: my-claude-project
-engine: podman # or docker, or omit
+name: go-project
 build:
   context: .
   containerfile: ./Containerfile

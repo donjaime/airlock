@@ -28,10 +28,6 @@ USER 1000:1000
 ENV HOME=/home/ubuntu
 WORKDIR /workspace
 
-RUN mkdir -p /home/ubuntu/.config \
-  && echo 'export PS1="\[\e[0;36m\]airlock\[\e[0m\]:\[\e[0;33m\]\w\[\e[0m\]\\$ "' >> /home/ubuntu/.bashrc \
-  && echo 'alias ll="ls -la"' >> /home/ubuntu/.bashrc
-
 COPY --chown=1000:1000 scripts/install-claude-code.sh /tmp/install-claude-code.sh
 USER root
 RUN bash /tmp/install-claude-code.sh && rm -f /tmp/install-claude-code.sh
