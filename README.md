@@ -39,6 +39,38 @@ Everything in `.airlock/` is **local-only**, not meant to be committed to versio
 
 ---
 
+
+## Commands
+
+- `airlock init`  
+  Creates `airlock.yaml` (if missing), ensures `.airlock/` state dirs, and updates `.gitignore`.
+
+- `airlock up`  
+  Builds container image (if configured) + creates container + ensures state dirs exist.
+
+- `airlock enter`  
+  Enters the container with `bash -l`.
+
+- `airlock exec -- <cmd...>`  
+  Runs a command inside the container.
+
+- `airlock down [name]`  
+  Stops and removes the container (keeps `.airlock` state dirs). If `name` is omitted, it downs the container for the current project.
+
+- `airlock list`  
+  Lists all airlock containers.
+
+- `airlock info`  
+  Prints detected engine, paths, and config.
+
+- `airlock version`  
+  Prints version.
+
+- `airlock help`  
+  Prints this usage information.
+
+-----
+
 ## What goes where
 
 ```
@@ -288,35 +320,6 @@ Add `airlock` to your path or move it somewhere that is already on the path eg:
 ```
 sudo mv airlock /usr/local/bin/
 ```
-
-## Commands
-
-- `airlock init`  
-  Creates `airlock.yaml` (if missing), ensures `.airlock/` state dirs, and updates `.gitignore`.
-
-- `airlock up`  
-  Builds container image (if configured) + creates container + ensures state dirs exist.
-
-- `airlock enter`  
-  Enters the container with `bash -l`.
-
-- `airlock exec -- <cmd...>`  
-  Runs a command inside the container.
-
-- `airlock down [name]`  
-  Stops and removes the container (keeps `.airlock` state dirs). If `name` is omitted, it downs the container for the current project.
-
-- `airlock list`  
-  Lists all airlock containers.
-
-- `airlock info`  
-  Prints detected engine, paths, and config.
-
-- `airlock version`  
-  Prints version.
-
-- `airlock help`  
-  Prints this usage information.
 
 ## Typical workflow
 
