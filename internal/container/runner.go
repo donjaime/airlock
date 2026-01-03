@@ -96,6 +96,45 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 	return nil
 }
 
+func (r *Runner) getMergedEnv(cfg *config.Config, u *UserConfig, extraEnv []string) []string {
+	envMap := make(map[string]string)
+
+	// 1. Image defaults
+	for _, e := range u.Env {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	// 2. Airlock yaml defaults
+	for k, v := range cfg.Env {
+		envMap[k] = v
+	}
+
+	// 3. Command line overrides (-e)
+	for _, e := range extraEnv {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
+	}
+
+	// 4. Airlock internal overrides
+	home := u.Home
+	envMap["HOME"] = home
+	envMap["XDG_CACHE_HOME"] = home + "/.cache"
+	envMap["XDG_CONFIG_HOME"] = home + "/.config"
+	envMap["XDG_DATA_HOME"] = home + "/.local/share"
+	envMap["WORKDIR"] = u.WorkDir
+
+	var env []string
+	for k, v := range envMap {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	return env
+}
+
 func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir string, env []string) error {
 	image := cfg.Image
 	if cfg.Build != nil {
@@ -105,11 +144,14 @@ func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir st
 	if err != nil {
 		return err
 	}
+
+	mergedEnv := r.getMergedEnv(cfg, userConfig, env)
+
 	args := []string{"exec", "-it", "--user", fmt.Sprintf("%s", userConfig.Name)}
-	for _, e := range env {
+	for _, e := range mergedEnv {
 		args = append(args, "-e", e)
 	}
-	args = append(args, containerName(cfg), "bash", "-l")
+	args = append(args, containerName(cfg), "bash")
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
@@ -122,8 +164,11 @@ func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir str
 	if err != nil {
 		return err
 	}
+
+	mergedEnv := r.getMergedEnv(cfg, userConfig, env)
+
 	args := []string{"exec", "-it", "--user", fmt.Sprintf("%s", userConfig.Name)}
-	for _, e := range env {
+	for _, e := range mergedEnv {
 		args = append(args, "-e", e)
 	}
 	args = append(args, containerName(cfg))
@@ -263,31 +308,14 @@ func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error
 func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *UserConfig, absProjectDir, homeHost, cacheHost, workDirHost string) error {
 	name := containerName(cfg)
 
-	// Build the environment map, starting with image defaults, then airlock.yaml, then airlock overrides.
-	envMap := make(map[string]string)
-	for _, e := range u.Env {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envMap[parts[0]] = parts[1]
-		}
-	}
+	mergedEnv := r.getMergedEnv(cfg, u, nil)
 
-	for k, v := range cfg.Env {
-		envMap[k] = v
+	var envArgs []string
+	for _, e := range mergedEnv {
+		envArgs = append(envArgs, "-e", e)
 	}
 
 	home := u.Home
-	// Airlock specific overrides
-	envMap["HOME"] = home
-	envMap["XDG_CACHE_HOME"] = home + "/.cache"
-	envMap["XDG_CONFIG_HOME"] = home + "/.config"
-	envMap["XDG_DATA_HOME"] = home + "/.local/share"
-	envMap["WORKDIR"] = u.WorkDir
-
-	var envArgs []string
-	for k, v := range envMap {
-		envArgs = append(envArgs, "-e", fmt.Sprintf("%s=%s", k, v))
-	}
 
 	mountArgs := []string{
 		"-v", homeHost + ":" + home + ":Z",
