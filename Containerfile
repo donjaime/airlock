@@ -19,6 +19,7 @@ RUN addgroup -g $USER_GID $USERNAME \
 USER $USERNAME
 ENV HOME=/home/$USERNAME
 ENV GOCACHE=$HOME/.cache/go-build
+ENV PATH=/usr/local/go/bin/:$PATH
 WORKDIR /workspace
 
 # Keep the container running so you can 'exec' into it

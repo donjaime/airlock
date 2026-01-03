@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/donjaime/airlock/internal/config"
@@ -15,10 +14,9 @@ import (
 
 type UserConfig struct {
 	Name    string
-	UID     int
-	GID     int
 	Home    string
 	WorkDir string
+	Env     []string
 }
 
 type Runner struct {
@@ -107,7 +105,7 @@ func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir st
 	if err != nil {
 		return err
 	}
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", userConfig.UID, userConfig.GID)}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%s", userConfig.Name)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -124,7 +122,7 @@ func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir str
 	if err != nil {
 		return err
 	}
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%d:%d", userConfig.UID, userConfig.GID)}
+	args := []string{"exec", "-it", "--user", fmt.Sprintf("%s", userConfig.Name)}
 	for _, e := range env {
 		args = append(args, "-e", e)
 	}
@@ -200,8 +198,9 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, e
 
 	var data []struct {
 		Config struct {
-			User       string `json:"User"`
-			WorkingDir string `json:"WorkingDir"`
+			User       string   `json:"User"`
+			WorkingDir string   `json:"WorkingDir"`
+			Env        []string `json:"Env"`
 		} `json:"Config"`
 	}
 	if err := json.Unmarshal(out, &data); err != nil {
@@ -214,44 +213,29 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, e
 
 	userStr := data[0].Config.User
 	workdir := data[0].Config.WorkingDir
+	env := data[0].Config.Env
 
-	// Default to root if not specified
+	// Default to inheriting host uid if not specified
 	if userStr == "" {
-		userStr = "0:0"
+		userStr = "1000"
 	}
 
-	u := &UserConfig{WorkDir: workdir}
-	parts := strings.Split(userStr, ":")
-	if len(parts) == 1 {
-		// Could be name or UID
-		if uid, err := strconv.Atoi(parts[0]); err == nil {
-			u.UID = uid
-			u.GID = uid // default GID to UID if only UID provided? Or 0?
-		} else {
-			u.Name = parts[0]
-		}
-	} else if len(parts) == 2 {
-		uid, _ := strconv.Atoi(parts[0])
-		gid, _ := strconv.Atoi(parts[1])
-		u.UID = uid
-		u.GID = gid
+	userConfig := &UserConfig{
+		Name:    userStr,
+		WorkDir: workdir,
+		Env:     env,
 	}
 
 	// Now we need to find the home directory. This is tricky because it depends on the user inside the container.
 	// Common convention is /home/username or /root.
 	// If we have a username but not UID/GID, we might need to look it up in the image (e.g. /etc/passwd).
 	// For now, let's make some assumptions or try to find it.
-	if u.UID == 0 && u.Name == "" {
-		u.Name = "root"
+	if userConfig.Name == "root" {
+		userConfig.Home = "/root"
+	} else if userConfig.Name != "" {
+		userConfig.Home = "/home/" + userConfig.Name
 	}
-	if u.Name == "root" || u.UID == 0 {
-		u.Home = "/root"
-	} else if u.Name != "" {
-		u.Home = "/home/" + u.Name
-	} else {
-		u.Home = fmt.Sprintf("/home/%d", u.UID)
-	}
-	return u, nil
+	return userConfig, nil
 }
 
 func (r *Runner) containerExists(ctx context.Context, name string) (bool, error) {
@@ -279,15 +263,29 @@ func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error
 func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *UserConfig, absProjectDir, homeHost, cacheHost, workDirHost string) error {
 	name := containerName(cfg)
 
-	home := u.Home
-	envArgs := []string{
-		"-e", "HOME=" + home,
-		"-e", "XDG_CACHE_HOME=" + home + "/.cache",
-		"-e", "XDG_CONFIG_HOME=" + home + "/.config",
-		"-e", "XDG_DATA_HOME=" + home + "/.local/share",
-		"-e", "WORKDIR=" + u.WorkDir,
+	// Build the environment map, starting with image defaults, then airlock.yaml, then airlock overrides.
+	envMap := make(map[string]string)
+	for _, e := range u.Env {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = parts[1]
+		}
 	}
+
 	for k, v := range cfg.Env {
+		envMap[k] = v
+	}
+
+	home := u.Home
+	// Airlock specific overrides
+	envMap["HOME"] = home
+	envMap["XDG_CACHE_HOME"] = home + "/.cache"
+	envMap["XDG_CONFIG_HOME"] = home + "/.config"
+	envMap["XDG_DATA_HOME"] = home + "/.local/share"
+	envMap["WORKDIR"] = u.WorkDir
+
+	var envArgs []string
+	for k, v := range envMap {
 		envArgs = append(envArgs, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
 
@@ -321,7 +319,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		"run", "-d",
 		"--name", name,
 		"-w", u.WorkDir,
-		"--user", fmt.Sprintf("%d:%d", u.UID, u.GID),
+		"--user", fmt.Sprintf("%s", u.Name),
 	}
 	if r.Engine == EnginePodman {
 		args = append(args, "--userns=keep-id")
@@ -334,7 +332,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		image = cfg.Build.Tag
 	}
 	args = append(args, image)
-	args = append(args, "bash", "-lc", "tail -f /dev/null")
+	// args = append(args, "sleep", "infinity")
 
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
