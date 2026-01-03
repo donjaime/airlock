@@ -81,52 +81,7 @@ func main() {
 		}
 		fmt.Println("Created airlock.yaml and .airlock/airlock.local.yaml (if missing), ensured .airlock dirs, and updated .gitignore.")
 
-	case "list":
-		eng, err := container.DetectEngine("")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
-			os.Exit(1)
-		}
-		runner := container.NewRunner(eng)
-		runner.Verbose = *verbose
-		names, err := runner.List(ctx)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "list error: %v\n", err)
-			os.Exit(1)
-		}
-		for _, name := range names {
-			fmt.Println(name)
-		}
-
-	case "down":
-		var target string
-		if len(cmdArgs) > 0 {
-			target = cmdArgs[0]
-		}
-
-		eng, err := container.DetectEngine("")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
-			os.Exit(1)
-		}
-		runner := container.NewRunner(eng)
-		runner.Verbose = *verbose
-
-		var cfg *config.Config
-		if target == "" {
-			cfg, _, err = loadConfig(*configPath)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to load config: %v. Run: airlock init or provide a container name\n", err)
-				os.Exit(1)
-			}
-		}
-
-		if err := runner.Down(ctx, cfg, target); err != nil {
-			fmt.Fprintf(os.Stderr, "down error: %v\n", err)
-			os.Exit(1)
-		}
-
-	case "info", "up", "enter", "exec":
+	case "list", "down", "info", "up", "enter", "exec":
 		cfg, _, err := loadConfig(*configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load config: %v. Run: airlock init\n", err)
@@ -141,10 +96,30 @@ func main() {
 		}
 
 		runner := container.NewRunner(eng)
+		runner.Verbose = *verbose
 
 		switch cmd {
+		case "list":
+			names, err := runner.List(ctx)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "list error: %v\n", err)
+				os.Exit(1)
+			}
+			for _, name := range names {
+				fmt.Println(name)
+			}
+
+		case "down":
+			var target string
+			if len(cmdArgs) > 0 {
+				target = cmdArgs[0]
+			}
+			if err := runner.Down(ctx, cfg, target); err != nil {
+				fmt.Fprintf(os.Stderr, "down error: %v\n", err)
+				os.Exit(1)
+			}
+
 		case "info":
-			runner.Verbose = *verbose
 			info, err := runner.Info(ctx, cfg, absProj)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "info error: %v\n", err)
@@ -153,21 +128,18 @@ func main() {
 			fmt.Println(info)
 
 		case "up":
-			runner.Verbose = *verbose
 			if err := runner.Up(ctx, cfg, absProj); err != nil {
 				fmt.Fprintf(os.Stderr, "up error: %v\n", err)
 				os.Exit(1)
 			}
 
 		case "enter":
-			runner.Verbose = *verbose
 			if err := runner.Enter(ctx, cfg, absProj, envVars); err != nil {
 				fmt.Fprintf(os.Stderr, "enter error: %v\n", err)
 				os.Exit(1)
 			}
 
 		case "exec":
-			runner.Verbose = *verbose
 			if len(cmdArgs) == 0 {
 				fmt.Fprintln(os.Stderr, "exec requires a command, e.g. airlock exec -- ls -la")
 				os.Exit(2)
