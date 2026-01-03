@@ -2,6 +2,7 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Install a bunch of useful fullstack dev deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -21,16 +22,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     golang-go \
   && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /workspace \
-  && chown -R 1000:1000 /workspace
+# Base image uses ubuntu user
+ARG USERNAME=ubuntu
 
-USER 1000:1000
-ENV HOME=/home/ubuntu
+USER root
+RUN mkdir -p /workspace && chown $USERNAME:$USERNAME /workspace
+
+# Install claude code as root
+COPY --chown=$USERNAME scripts/install-claude-code.sh /tmp/install-claude-code.sh
+RUN bash /tmp/install-claude-code.sh && rm -f /tmp/install-claude-code.sh
+
+# Switch back to ubuntu and set HOME and GOCACHE
+USER $USERNAME
+ENV HOME=/home/$USERNAME
+ENV GOCACHE=$HOME/.cache/go-build
 WORKDIR /workspace
 
-COPY --chown=1000:1000 scripts/install-claude-code.sh /tmp/install-claude-code.sh
-USER root
-RUN bash /tmp/install-claude-code.sh && rm -f /tmp/install-claude-code.sh
-USER 1000:1000
-
-CMD ["bash", "-lc", "tail -f /dev/null"]
+# Keep the container running so you can 'exec' into it
+CMD ["sleep", "infinity"]
