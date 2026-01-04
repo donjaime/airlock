@@ -5,21 +5,57 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	Name       string            `yaml:"name"`
-	ProjectDir string            `yaml:"projectDir"` // (Override only) Defaults to the dir containing the config file. Usually unset.
-	WorkDir    string            `yaml:"workdir"`    // defaults to "."
-	Image      string            `yaml:"image"`
-	Build      *BuildConfig      `yaml:"build"`
-	Engine     string            `yaml:"engine"` // "podman" or "docker" or empty
-	HomeDir    string            `yaml:"home"`
-	CacheDir   string            `yaml:"cache"`
-	Mounts     []Mount           `yaml:"mounts"`
-	Env        map[string]string `yaml:"env"`
+	Name       string       `yaml:"name"`
+	ProjectDir string       `yaml:"projectDir"` // (Override only) Defaults to the dir containing the config file. Usually unset.
+	WorkDir    string       `yaml:"workdir"`    // defaults to "."
+	Image      string       `yaml:"image"`
+	Build      *BuildConfig `yaml:"build"`
+	Engine     string       `yaml:"engine"` // "podman" or "docker" or empty
+	HomeDir    string       `yaml:"home"`
+	CacheDir   string       `yaml:"cache"`
+	Mounts     []Mount      `yaml:"mounts"`
+	Env        EnvVars      `yaml:"env"`
+}
+
+type EnvVars map[string]string
+
+func (e *EnvVars) UnmarshalYAML(value *yaml.Node) error {
+	if *e == nil {
+		*e = make(EnvVars)
+	}
+	switch value.Kind {
+	case yaml.MappingNode:
+		var m map[string]string
+		if err := value.Decode(&m); err != nil {
+			return err
+		}
+		for k, v := range m {
+			(*e)[k] = v
+		}
+	case yaml.SequenceNode:
+		var s []string
+		if err := value.Decode(&s); err != nil {
+			return err
+		}
+		for _, item := range s {
+			parts := strings.SplitN(item, "=", 2)
+			if len(parts) == 2 {
+				(*e)[parts[0]] = parts[1]
+			} else {
+				// Handle KEY only format if needed, for now just skip or set to empty
+				(*e)[parts[0]] = ""
+			}
+		}
+	default:
+		return fmt.Errorf("env must be a map or a list of strings")
+	}
+	return nil
 }
 
 type BuildConfig struct {
@@ -114,7 +150,7 @@ func Load(path string) (*Config, error) {
 	}
 
 	if c.Env == nil {
-		c.Env = map[string]string{}
+		c.Env = EnvVars{}
 	}
 
 	if c.Name == "" {

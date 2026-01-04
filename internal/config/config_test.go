@@ -63,6 +63,41 @@ env:
 	}
 }
 
+func TestLoadWithEnvList(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "airlock-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfgPath := filepath.Join(tmpDir, "airlock.yaml")
+	mainYAML := `name: test-env-list
+env:
+  - VAR1=value1
+  - VAR2=value2
+  - VAR3
+`
+	err = os.WriteFile(cfgPath, []byte(mainYAML), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(cfgPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Env["VAR1"] != "value1" {
+		t.Errorf("expected VAR1=value1, got %s", cfg.Env["VAR1"])
+	}
+	if cfg.Env["VAR2"] != "value2" {
+		t.Errorf("expected VAR2=value2, got %s", cfg.Env["VAR2"])
+	}
+	if v, ok := cfg.Env["VAR3"]; !ok || v != "" {
+		t.Errorf("expected VAR3 to be present and empty, got %q (ok=%v)", v, ok)
+	}
+}
+
 func TestLoadWithBuild(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "airlock-build-test-*")
 	if err != nil {
