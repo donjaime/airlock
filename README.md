@@ -3,7 +3,7 @@
 A lightweight CLI and set of credential management patterns to create **project-scoped, persistent container sandboxes** for local development — isolating your system from untrusted code, supply-chain attacks, and agent-driven automation.
 
 `airlock` was inspired by the ease of use and developer convenience of **Fedora Toolbx (aka Toolbox)** for mutable, local dev workflows. But with some additional asks that Toolbox didn't quite provide. Specifically:
-- **Container isolation** to limit the damage of 3rd part dependency supply-chain attacks in npm, pip, etc... (eg. malicious pre or post install scripts) - as well as create a safer sandbox for agentic tools to operate closer to YOLO mode
+- **Container isolation** to limit the damage of 3rd party dependency supply-chain attacks in npm, pip, etc... (eg. malicious pre or post install scripts) - as well as create a safer sandbox for agentic tools to operate closer to YOLO mode
 - **Surgical Persistent state**: project-scoped HOME + installation cache
 - **Opinionated patterns for identity and credential management**: project-scoped or shared secrets, ssh and gpg credentials - again to limit what can be done inside the container, but also make it convenient to give AI agents access to things in an auditable way
 - **Version controllable project configuration** to make it easy to have standard environments that can be shared
@@ -213,12 +213,12 @@ The container engine to use.
 
 ### `image`
 
-The container image Airlock should run.
+If present, the container image Airlock should run. Examples shown make use of `build` instead for custom container.
 
 * Example: `ghcr.io/your-org/airlock-dev:latest`
 * Use this when you have a standard base image for your team/org.
 
-### `build` (optional)
+### `build`
 
 If present, Airlock builds an image for this project instead of pulling `image`.
 
@@ -573,4 +573,4 @@ MIT
 - **MacOS support**. Only tested on linux. 
 - **IDE support**. SDKs and libraries are often needed to power LSPs and refactoring. You could configure remote SSH manually, but that's clunky. On linux you can point the IDE at the stuff downloaded by the container in cache and home. But I think that might violate some of the desired isolation we want. 
 - **Identity management CLI tools**. Promote some of the patterns to CLI functions. Manual symlinking is clunky.
-- 
+- **More advance network settings**. Control what agents can and cannot do inside the container. We are super basic currently.
