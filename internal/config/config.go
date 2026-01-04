@@ -242,11 +242,6 @@ cache: ./.airlock/cache
 
 workdir: .
 
-mounts:
-  - source: .
-    target: /workspace
-    mode: rw
-
 env:
   - EXAMPLE_VAR: "hello"
 `, name, name)
