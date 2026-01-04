@@ -137,14 +137,26 @@ func TestInitFiles(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	err = InitFiles(tmpDir)
+	err = InitFiles(tmpDir, "test-proj")
 	if err != nil {
 		t.Fatalf("InitFiles failed: %v", err)
 	}
 
 	// Check airlock.yaml
-	if _, err := os.Stat(filepath.Join(tmpDir, "airlock.yaml")); err != nil {
+	b, err := os.ReadFile(filepath.Join(tmpDir, "airlock.yaml"))
+	if err != nil {
 		t.Errorf("airlock.yaml not created")
+	}
+	if string(b) == "" {
+		t.Errorf("airlock.yaml is empty")
+	}
+	if indexOf(string(b), "name: test-proj") < 0 {
+		t.Errorf("airlock.yaml does not contain expected name")
+	}
+
+	// Check Containerfile
+	if _, err := os.Stat(filepath.Join(tmpDir, "Containerfile")); err != nil {
+		t.Errorf("Containerfile not created")
 	}
 
 	// Check .airlock/airlock.local.yaml

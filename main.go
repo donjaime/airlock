@@ -21,7 +21,7 @@ Usage:
   airlock [--config path] [-e var] [-v] <command> [args]
 
 Commands:
-  init       Create airlock.yaml and .airlock/airlock.local.yaml (if missing) + ensure .airlock dirs + .gitignore entry
+  init [name]  Create airlock.yaml, Containerfile, and .airlock/airlock.local.yaml (if missing) + ensure .airlock dirs + .gitignore entry
   up         Build (if needed) and create the airlock container (idempotent)
   enter      Enter the airlock container (interactive shell)
   exec       Execute a command inside the airlock container
@@ -75,11 +75,15 @@ func main() {
 		fmt.Println(version)
 
 	case "init":
-		if err := config.InitFiles("."); err != nil {
+		name := ""
+		if len(cmdArgs) > 0 {
+			name = cmdArgs[0]
+		}
+		if err := config.InitFiles(".", name); err != nil {
 			fmt.Fprintf(os.Stderr, "init error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("Created airlock.yaml and .airlock/airlock.local.yaml (if missing), ensured .airlock dirs, and updated .gitignore.")
+		fmt.Println("Created airlock.yaml, Containerfile, and .airlock/airlock.local.yaml (if missing), ensured .airlock dirs, and updated .gitignore.")
 
 	case "list", "down", "info", "up", "enter", "exec":
 		cfg, _, err := loadConfig(*configPath)

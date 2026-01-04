@@ -42,8 +42,8 @@ Everything in `.airlock/` is **local-only**, not meant to be committed to versio
 
 ## Commands
 
-- `airlock init`  
-  Creates `airlock.yaml` (if missing), ensures `.airlock/` state dirs, and updates `.gitignore`.
+- `airlock init [name]`  
+  Creates `airlock.yaml`, `Containerfile`, ensures `.airlock/` state dirs, and updates `.gitignore`. Optionally takes a project `name`.
 
 - `airlock up`  
   Builds container image (if configured) + creates container + ensures state dirs exist.
@@ -327,14 +327,16 @@ sudo mv airlock /usr/local/bin/
 
 
 ```bash
-airlock init
+airlock init [project-name]
 ```
 
 This creates:
 
 - `airlock.yaml` (only if missing)
 
-- `./.airlock/home` and `./.airlock/cache` and an empty `./airlock/airlock.local.yaml`
+- `Containerfile` (only if missing)
+
+- `./.airlock/home` and `./.airlock/cache` and an empty `./.airlock/airlock.local.yaml`
 - ensures `.gitignore` ignores `.airlock/`
 
 
@@ -553,7 +555,7 @@ airlock enter -e "ANTHROPIC_API_KEY"
 
 ## Claude Code (optional)
 
-If installed during the container build (see default Dockerfile example provided):
+If installed during the container build (see default Containerfile example provided):
 
 ```bash
 claude --help

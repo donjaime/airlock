@@ -29,8 +29,7 @@ USER root
 RUN mkdir -p /workspace && chown $USERNAME:$USERNAME /workspace
 
 # Install claude code as root
-COPY --chown=$USERNAME scripts/install-claude-code.sh /tmp/install-claude-code.sh
-RUN bash /tmp/install-claude-code.sh && rm -f /tmp/install-claude-code.sh
+RUN npm install -g @anthropic-ai/claude-code || echo "WARNING: Failed to install @anthropic-ai/claude-code via npm."
 
 # Switch back to ubuntu and set HOME and GOCACHE
 USER $USERNAME

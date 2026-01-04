@@ -123,14 +123,26 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
-func InitFiles(dir string) error {
+func InitFiles(dir string, name string) error {
 	cfgPath := filepath.Join(dir, "airlock.yaml")
 	localCfgPath := filepath.Join(dir, ".airlock", "airlock.local.yaml")
 	gitignorePath := filepath.Join(dir, ".gitignore")
+	containerfilePath := filepath.Join(dir, "Containerfile")
+
+	if name == "" {
+		name = "my-project"
+	}
 
 	// config only if missing
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(cfgPath, []byte(defaultYAML()), 0644); err != nil {
+		if err := os.WriteFile(cfgPath, []byte(defaultYAML(name)), 0644); err != nil {
+			return err
+		}
+	}
+
+	// Containerfile only if missing
+	if _, err := os.Stat(containerfilePath); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(containerfilePath, []byte(defaultContainerfile()), 0644); err != nil {
 			return err
 		}
 	}
@@ -168,8 +180,8 @@ env:
 `
 }
 
-func defaultYAML() string {
-	return `name: my-project
+func defaultYAML(name string) string {
+	return fmt.Sprintf(`name: %s
 
 engine: podman # or docker, or omit
 
@@ -181,7 +193,7 @@ engine: podman # or docker, or omit
 build:
   context: .
   containerfile: ./Containerfile
-  tag: airlock:my-project
+  tag: airlock:%s
 
 # Host directories that back the sandbox HOME and cache.
 # Defaults are inside the repo for simplicity.
@@ -201,6 +213,51 @@ mounts:
 
 env:
   - EXAMPLE_VAR: "hello"
+`, name, name)
+}
+
+func defaultContainerfile() string {
+	return `FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install a bunch of useful fullstack dev deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    gnupg \
+    jq \
+    less \
+    openssh-client \
+    ripgrep \
+    build-essential \
+    python3 \
+    python3-pip \
+    nodejs \
+    npm \
+    bash \
+    tzdata \
+    golang-go \
+  && rm -rf /var/lib/apt/lists/*
+
+# Base image uses ubuntu user
+ARG USERNAME=ubuntu
+
+USER root
+RUN mkdir -p /workspace && chown $USERNAME:$USERNAME /workspace
+
+# Install claude code as root
+RUN npm install -g @anthropic-ai/claude-code || echo "WARNING: Failed to install @anthropic-ai/claude-code via npm."
+
+# Switch back to ubuntu and set HOME and GOCACHE
+USER $USERNAME
+ENV HOME=/home/$USERNAME
+ENV GOCACHE=$HOME/.cache/go-build
+WORKDIR /workspace
+
+# Keep the container running so you can 'exec' into it
+CMD ["sleep", "infinity"]
 `
 }
 
