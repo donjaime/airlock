@@ -316,10 +316,66 @@ cd airlock
 go build -o airlock .
 ```
 
-Add `airlock` to your path or move it somewhere that is already on the path eg: 
+Add `airlock` to your path or move it somewhere that is already on the path eg:
 ```
 sudo mv airlock /usr/local/bin/
 ```
+
+### Prerequisites
+
+Airlock needs a container runtime. It supports **Podman** (preferred) and **Docker**.
+
+#### Linux
+
+```bash
+# Fedora / RHEL
+sudo dnf install podman
+
+# Ubuntu / Debian
+sudo apt install podman
+```
+
+Podman runs rootless out of the box on Linux. No VM or daemon required.
+
+#### macOS
+
+On macOS, containers run inside a lightweight Linux VM. You have several options:
+
+**Option A: Podman Machine** (recommended)
+
+```bash
+brew install podman
+podman machine init --cpus 4 --memory 4096
+podman machine start
+```
+
+**Option B: Colima + Podman**
+
+```bash
+brew install colima podman
+colima start --runtime podman --mount-type virtiofs
+```
+
+`virtiofs` is recommended over `sshfs` for better performance with high-inode workloads like `node_modules`.
+
+**Option C: Colima + Docker**
+
+```bash
+brew install colima docker
+colima start
+```
+
+If using Docker, set `engine: docker` in your `airlock.yaml` (or remove the `engine` line to let airlock auto-detect).
+
+> **Note:** Your project must be under `$HOME` (which is shared into the VM by default). For projects on external drives or other paths, configure additional mounts when starting the VM (e.g., `colima start --mount /path:w` or `podman machine init --volume /path`).
+
+#### macOS VM lifecycle
+
+The VM is a background service. Start it once and forget about it. Airlock handles the rest:
+
+- **Switching projects**: Each project has its own container (`airlock-<name>`). Multiple containers coexist in the same VM. Just `cd` between projects and `airlock up`.
+- **VM restart** (e.g., after a reboot): Your containers are preserved. `airlock up` detects the stopped container and restarts it — no rebuild needed.
+- **VM deletion** (`colima delete` / `podman machine rm`): Images and containers are destroyed, but `.airlock/home` and `.airlock/cache` on your Mac are preserved. Next `airlock up` rebuilds from the Containerfile.
 
 ## Typical workflow
 
@@ -569,10 +625,3 @@ npm install -g @anthropic-ai/claude-code
 
 ## License
 MIT
-
-
-## Future Work
-- **MacOS support**. Only tested on linux. 
-- **IDE support**. SDKs and libraries are often needed to power LSPs and refactoring. You could configure remote SSH manually, but that's clunky. On linux you can point the IDE at the stuff downloaded by the container in cache and home. But I think that might violate some of the desired isolation we want. 
-- **Identity management CLI tools**. Promote some of the patterns to CLI functions. Manual symlinking is clunky.
-- **More advance network settings**. Control what agents can and cannot do inside the container. We are super basic currently.
