@@ -10,3 +10,5 @@ airlock
 
 # airlock state (contains credentials + install artifacts)
 .airlock/
+
+CLAUDE.md

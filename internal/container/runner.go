@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/donjaime/airlock/internal/config"
@@ -17,6 +19,8 @@ type UserConfig struct {
 	Home    string
 	WorkDir string
 	Env     []string
+	UID     int
+	GID     int
 }
 
 type Runner struct {
@@ -81,6 +85,14 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 		return err
 	}
 	if !exists {
+		if r.Engine == EnginePodman {
+			uid, gid, err := r.resolveContainerUID(ctx, image, userConfig.Name)
+			if err != nil {
+				return err
+			}
+			userConfig.UID = uid
+			userConfig.GID = gid
+		}
 		if err := r.createContainer(ctx, cfg, userConfig, absProjectDir, homeHost, cacheHost, workDirHost); err != nil {
 			return err
 		}
@@ -260,9 +272,9 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, e
 	workdir := data[0].Config.WorkingDir
 	env := data[0].Config.Env
 
-	// Default to inheriting host uid if not specified
+	// Default: images with no USER directive run as root
 	if userStr == "" {
-		userStr = "1000"
+		userStr = "root"
 	}
 
 	userConfig := &UserConfig{
@@ -281,6 +293,30 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, e
 		userConfig.Home = "/home/" + userConfig.Name
 	}
 	return userConfig, nil
+}
+
+func (r *Runner) resolveContainerUID(ctx context.Context, image, user string) (int, int, error) {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s run --rm --user %s --entrypoint sh %s -c 'echo $(id -u):$(id -g)'\n", r.engineBin(), user, image)
+	}
+	cmd := exec.CommandContext(ctx, r.engineBin(), "run", "--rm", "--user", user, "--entrypoint", "sh", image, "-c", "echo $(id -u):$(id -g)")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to resolve UID/GID for user %s in image %s: %w", user, image, err)
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unexpected id output: %s", string(out))
+	}
+	uid, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to parse UID %q: %w", parts[0], err)
+	}
+	gid, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return uid, 0, fmt.Errorf("failed to parse GID %q: %w", parts[1], err)
+	}
+	return uid, gid, nil
 }
 
 func (r *Runner) containerExists(ctx context.Context, name string) (bool, error) {
@@ -317,9 +353,10 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 
 	home := u.Home
 
+	label := volumeLabel()
 	mountArgs := []string{
-		"-v", homeHost + ":" + home + ":Z",
-		"-v", cacheHost + ":" + home + "/.cache:Z",
+		"-v", homeHost + ":" + home + label,
+		"-v", cacheHost + ":" + home + "/.cache" + label,
 	}
 
 	workdirMounted := false
@@ -332,12 +369,15 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		if mode == "" {
 			mode = "rw"
 		}
-		// We add :Z for podman relabeling, similar to other mounts
-		mountArgs = append(mountArgs, "-v", fmt.Sprintf("%s:%s:%s,Z", src, m.Target, mode))
+		mountOpt := mode
+		if label != "" {
+			mountOpt += "," + strings.TrimPrefix(label, ":")
+		}
+		mountArgs = append(mountArgs, "-v", fmt.Sprintf("%s:%s:%s", src, m.Target, mountOpt))
 	}
 
 	if !workdirMounted {
-		mountArgs = append([]string{"-v", workDirHost + ":" + u.WorkDir + ":Z"}, mountArgs...)
+		mountArgs = append([]string{"-v", workDirHost + ":" + u.WorkDir + label}, mountArgs...)
 	}
 
 	// Always hide .airlock folder from the working directory mount
@@ -351,7 +391,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 		"--user", fmt.Sprintf("%s", u.Name),
 	}
 	if r.Engine == EnginePodman {
-		args = append(args, "--userns=keep-id")
+		args = append(args, fmt.Sprintf("--userns=keep-id:uid=%d,gid=%d", u.UID, u.GID))
 	}
 	args = append(args, envArgs...)
 	args = append(args, mountArgs...)
@@ -386,4 +426,11 @@ func resolveHostPath(projectAbs, p string) string {
 		return p
 	}
 	return filepath.Clean(filepath.Join(projectAbs, p))
+}
+
+func volumeLabel() string {
+	if runtime.GOOS == "linux" {
+		return ":Z"
+	}
+	return ""
 }
