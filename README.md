@@ -417,6 +417,132 @@ airlock enter
 
 You should land in an interactive shell inside the container at `/workspace` (or your configured workdir).
 
+---
+
+## Git Worktrees & Parallel Agents
+
+Airlock pairs naturally with **git worktrees** to run many sandboxed agents (or developers) in parallel — each worktree gets its own container, home directory, and cache.
+
+### How it works
+
+When `name` is omitted from `airlock.yaml`, Airlock defaults to the **directory basename** as the project name. Since each git worktree lives in its own directory, every worktree automatically gets a unique container name, image tag, and `.airlock/` state.
+Assuming you keep your projects in `~/src`.
+
+```
+~/src/myproject/                → container: airlock-myproject
+~/src/myproject-feature-auth/   → container: airlock-myproject-feature-auth
+~/src/myproject-fix-parser/     → container: airlock-myproject-fix-parser
+```
+
+Each worktree's `.airlock/` directory (home, cache, local config) is independent — they never collide.
+
+### Setup
+
+**1. Initialize the main repo without an explicit name**
+
+```bash
+cd ~/src/myproject
+airlock init            # no name argument — lets name default to directory basename
+git add airlock.yaml Containerfile .gitignore
+git commit -m "Add airlock config"
+```
+
+Running `airlock init` without a name argument comments out the `name:` field in the generated `airlock.yaml`. This means the project name will always be derived from whichever directory Airlock is run from.
+
+> If your `airlock.yaml` already has an explicit `name:`, either remove/comment it out, or override it per-worktree via `.airlock/airlock.local.yaml` (see below).
+
+**2. Create worktrees**
+
+```bash
+git worktree add ../myproject-feature-auth feature/auth
+git worktree add ../myproject-fix-parser   fix/parser
+```
+
+**3. Bring up each worktree's container**
+
+```bash
+# Terminal 1
+cd ~/src/myproject-feature-auth
+airlock up && airlock enter
+
+# Terminal 2
+cd ~/src/myproject-fix-parser
+airlock up && airlock enter
+```
+
+Each worktree gets its own container (`airlock-myproject-feature-auth`, `airlock-myproject-fix-parser`) with its own isolated home and cache.
+
+**4. Run agents inside each container**
+
+```bash
+# In each container, run your agent of choice
+claude --dangerously-skip-permissions
+```
+
+Since the workspace mount, home directory, and cache are all per-worktree, agents cannot interfere with each other.
+
+### Using airlock exec for headless agent workflows
+
+For scripted / headless workflows, use `airlock exec` instead of `airlock enter`:
+
+```bash
+cd ~/src/myproject-feature-auth
+airlock up
+airlock -e ANTHROPIC_API_KEY exec -- claude -p "implement the auth module"
+```
+
+`airlock exec` automatically calls `airlock up` if the container isn't running, so you can also just:
+
+```bash
+airlock -e ANTHROPIC_API_KEY exec -- claude -p "implement the auth module"
+```
+
+### Overriding name per-worktree (alternative approach)
+
+If you prefer to keep an explicit `name:` in your checked-in `airlock.yaml`, you can override it per-worktree using the local config file (which is gitignored and per-worktree):
+
+```bash
+cd ~/src/myproject-feature-auth
+airlock init   # creates .airlock/ dirs and airlock.local.yaml
+```
+
+Then edit `.airlock/airlock.local.yaml`:
+
+```yaml
+name: myproject-feature-auth
+```
+
+This overrides the `name` from `airlock.yaml` for this worktree only.
+
+### Listing and tearing down
+
+```bash
+airlock list                        # shows all running airlock containers
+airlock down myproject-feature-auth # stops and removes a specific container
+```
+
+### Sharing a download cache across worktrees
+
+By default, each worktree gets its own cache (`./.airlock/cache`). This means every worktree re-downloads dependencies from scratch. To share a **package manager download cache** across all worktrees, set an absolute path in your checked-in `airlock.yaml`:
+
+```yaml
+cache: ~/.airlock/shared-cache
+```
+
+This host directory is mounted at `~/.cache` inside every container. Package managers that respect the XDG cache location (npm, pip, Go modules, etc.) will read and write to this shared cache, so `npm install` or `pip install` in a new worktree pulls from the warm cache instead of re-downloading everything.
+
+> **Note:** This shares the **download cache**, not `node_modules` or installed packages. `node_modules` lives in the workspace (`/workspace/node_modules`), which is always per-worktree since each worktree has its own workspace mount. Different branches can have different dependency versions without conflict.
+
+Keep `home` at the default (`./.airlock/home`) so that shell history, tool config, and agent state remain isolated per worktree.
+
+### Tips
+
+- **Worktree directory names become container names.** Pick short, descriptive names when creating worktrees (e.g., `../myproject-auth` not `../worktree-for-the-authentication-feature-branch`).
+- **`.airlock/` is per-worktree and gitignored.** Each worktree has independent home state, caches, and local config. Deleting a worktree also deletes its `.airlock/` state.
+- **Containers survive worktree deletion.** Run `airlock down` before removing a worktree, or clean up afterwards with `airlock down <name>`.
+- **Shared Containerfile.** The `Containerfile` is checked into git and shared across worktrees. If a feature branch modifies it, that worktree will build a different image (tagged uniquely since the name differs).
+
+---
 
 ## Identities & Credentials
 Airlock intentionally does **not** manage identities internally.

@@ -165,10 +165,6 @@ func InitFiles(dir string, name string) error {
 	gitignorePath := filepath.Join(dir, ".gitignore")
 	containerfilePath := filepath.Join(dir, "Containerfile")
 
-	if name == "" {
-		name = "my-project"
-	}
-
 	// config only if missing
 	if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(cfgPath, []byte(defaultYAML(name)), 0644); err != nil {
@@ -217,7 +213,20 @@ env:
 }
 
 func defaultYAML(name string) string {
-	return fmt.Sprintf(`name: %s
+	var nameBlock string
+	var tagLine string
+	if name != "" {
+		nameBlock = fmt.Sprintf("name: %s", name)
+		tagLine = fmt.Sprintf("  tag: airlock:%s", name)
+	} else {
+		nameBlock = `# name defaults to the directory name when omitted.
+# This is recommended for git worktree workflows so each worktree
+# automatically gets a unique container name from its directory.
+# name: my-project`
+		tagLine = "  # tag defaults to airlock:<name> when omitted"
+	}
+
+	return fmt.Sprintf(`%s
 
 engine: podman # or docker, or omit
 
@@ -229,7 +238,7 @@ engine: podman # or docker, or omit
 build:
   context: .
   containerfile: ./Containerfile
-  tag: airlock:%s
+%s
 
 # Host directories that back the sandbox HOME and cache.
 # Defaults are inside the repo for simplicity.
@@ -244,7 +253,7 @@ workdir: .
 
 env:
   - EXAMPLE_VAR: "hello"
-`, name, name)
+`, nameBlock, tagLine)
 }
 
 func defaultContainerfile() string {

@@ -205,6 +205,34 @@ func TestInitFiles(t *testing.T) {
 	}
 }
 
+func TestInitFilesNoName(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "airlock-init-noname-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	err = InitFiles(tmpDir, "")
+	if err != nil {
+		t.Fatalf("InitFiles failed: %v", err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(tmpDir, "airlock.yaml"))
+	if err != nil {
+		t.Fatalf("airlock.yaml not created")
+	}
+
+	content := string(b)
+	// Should not contain an uncommented name field
+	if indexOf(content, "\nname:") >= 0 {
+		t.Errorf("airlock.yaml should not contain an uncommented name field when no name is given")
+	}
+	// Should contain a commented-out name hint
+	if indexOf(content, "# name:") < 0 && indexOf(content, "# name defaults") < 0 {
+		t.Errorf("airlock.yaml should contain a commented-out name hint")
+	}
+}
+
 func TestLoadWithMounts(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "airlock-mounts-test-*")
 	if err != nil {
