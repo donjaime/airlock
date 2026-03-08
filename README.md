@@ -474,28 +474,8 @@ Each worktree gets its own container (`airlock-myproject-feature-auth`, `airlock
 
 **4. Run agents inside each container**
 
-```bash
-# In each container, run your agent of choice
-claude --dangerously-skip-permissions
-```
-
+In each container, run your agent of choice.
 Since the workspace mount, home directory, and cache are all per-worktree, agents cannot interfere with each other.
-
-### Using airlock exec for headless agent workflows
-
-For scripted / headless workflows, use `airlock exec` instead of `airlock enter`:
-
-```bash
-cd ~/src/myproject-feature-auth
-airlock up
-airlock -e ANTHROPIC_API_KEY exec -- claude -p "implement the auth module"
-```
-
-`airlock exec` automatically calls `airlock up` if the container isn't running, so you can also just:
-
-```bash
-airlock -e ANTHROPIC_API_KEY exec -- claude -p "implement the auth module"
-```
 
 ### Overriding name per-worktree (alternative approach)
 
