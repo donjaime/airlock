@@ -85,7 +85,24 @@ func main() {
 		}
 		fmt.Println("Created airlock.yaml, Containerfile, and .airlock/airlock.local.yaml (if missing), ensured .airlock dirs, and updated .gitignore.")
 
-	case "list", "down", "info", "up", "enter", "exec":
+	case "list":
+		eng, err := container.DetectEngine("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to detect container engine: %v\n", err)
+			os.Exit(1)
+		}
+		runner := container.NewRunner(eng)
+		runner.Verbose = *verbose
+		names, err := runner.List(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list error: %v\n", err)
+			os.Exit(1)
+		}
+		for _, name := range names {
+			fmt.Println(name)
+		}
+
+	case "down", "info", "up", "enter", "exec":
 		cfg, _, err := loadConfig(*configPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load config: %v. Run: airlock init\n", err)
@@ -103,16 +120,6 @@ func main() {
 		runner.Verbose = *verbose
 
 		switch cmd {
-		case "list":
-			names, err := runner.List(ctx)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "list error: %v\n", err)
-				os.Exit(1)
-			}
-			for _, name := range names {
-				fmt.Println(name)
-			}
-
 		case "down":
 			var target string
 			if len(cmdArgs) > 0 {
