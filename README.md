@@ -57,8 +57,8 @@ Everything in `.airlock/` is **local-only**, not meant to be committed to versio
 - `airlock down [name]`  
   Stops and removes the container (keeps `.airlock` state dirs). If `name` is omitted, it downs the container for the current project.
 
-- `airlock list`  
-  Lists all airlock containers.
+- `airlock list`
+  Lists all running airlock containers. Works from any directory (no config needed).
 
 - `airlock info`  
   Prints detected engine, paths, and config.
@@ -379,62 +379,35 @@ The VM is a background service. Start it once and forget about it. Airlock handl
 
 ## Typical workflow
 
-1. Create config + state dirs:
-
-
 ```bash
-airlock init [project-name]
+airlock init [project-name]   # create config, Containerfile, .airlock/ dirs, .gitignore
+airlock up                    # build image (if needed) and start container
+airlock enter                 # open an interactive shell inside the container
 ```
 
-This creates:
+You land in a shell at `/workspace` (or your configured workdir). Your `airlock.yaml` is safe to commit; secrets go in `.airlock/airlock.local.yaml` (which merges into the main config and is gitignored).
 
-- `airlock.yaml` (only if missing)
+### Multiple terminals
 
-- `Containerfile` (only if missing)
-
-- `./.airlock/home` and `./.airlock/cache` and an empty `./.airlock/airlock.local.yaml`
-- ensures `.gitignore` ignores `.airlock/`
-
-
-Your `airlock.yaml` is typically safe to check in to version control if it only contains stable relative configuration.
-It must never contain secrets directly.
-
-If you want to have non-version controlled local configuration, you can put that in `./.airlock/airlock.local.yaml` and any properties there will merge with the default `airlock.yaml`.
-
-> `.airlock/airlock.local.yaml` is often a convenient way to pass in local-only tokens that typically would be set as environment variables.
-
-2. Run:
-
-Build and run the container
-```bash
-airlock up
-```
-
-Then just enter it
-```bash
-airlock enter
-```
-
-You should land in an interactive shell inside the container at `/workspace` (or your configured workdir).
+Each `airlock enter` spawns a new shell process inside the same running container -- like opening another terminal on the same machine. Run it from as many terminals as you want. No extra containers needed.
 
 ---
 
 ## Git Worktrees & Parallel Agents
 
-Airlock pairs naturally with **git worktrees** to run many sandboxed agents (or developers) in parallel — each worktree gets its own container, home directory, and cache.
+Airlock pairs naturally with **git worktrees** to run parallel sandboxed agents or work on multiple branches simultaneously. Each worktree gets its own container and workspace mount, while optionally sharing cache and home directories.
 
 ### How it works
 
-When `name` is omitted from `airlock.yaml`, Airlock defaults to the **directory basename** as the project name. Since each git worktree lives in its own directory, every worktree automatically gets a unique container name, image tag, and `.airlock/` state.
-Assuming you keep your projects in `~/src`.
+Git and IDE operations stay on the **host**. The container handles **build tooling, compiling, and coding agents**. Each worktree is just a directory of source files from the container's perspective.
+
+When `name` is omitted from `airlock.yaml`, Airlock defaults to the **directory basename**. Since each worktree lives in its own directory, every worktree automatically gets a unique container:
 
 ```
-~/src/myproject/                → container: airlock-myproject
-~/src/myproject-feature-auth/   → container: airlock-myproject-feature-auth
-~/src/myproject-fix-parser/     → container: airlock-myproject-fix-parser
+~/src/myproject/              → airlock-myproject
+~/src/myproject-feature-auth/ → airlock-myproject-feature-auth
+~/src/myproject-fix-parser/   → airlock-myproject-fix-parser
 ```
-
-Each worktree's `.airlock/` directory (home, cache, local config) is independent — they never collide.
 
 ### Setup
 
@@ -442,85 +415,67 @@ Each worktree's `.airlock/` directory (home, cache, local config) is independent
 
 ```bash
 cd ~/src/myproject
-airlock init            # no name argument — lets name default to directory basename
+airlock init            # name defaults to directory basename
 git add airlock.yaml Containerfile .gitignore
 git commit -m "Add airlock config"
 ```
 
-Running `airlock init` without a name argument comments out the `name:` field in the generated `airlock.yaml`. This means the project name will always be derived from whichever directory Airlock is run from.
+> If your `airlock.yaml` has an explicit `name:`, remove it or override per-worktree via `.airlock/airlock.local.yaml`.
 
-> If your `airlock.yaml` already has an explicit `name:`, either remove/comment it out, or override it per-worktree via `.airlock/airlock.local.yaml` (see below).
-
-**2. Create worktrees**
+**2. Create worktrees and bring them up**
 
 ```bash
 git worktree add ../myproject-feature-auth feature/auth
 git worktree add ../myproject-fix-parser   fix/parser
-```
 
-**3. Bring up each worktree's container**
-
-```bash
 # Terminal 1
-cd ~/src/myproject-feature-auth
-airlock up && airlock enter
+cd ~/src/myproject-feature-auth && airlock up && airlock enter
 
 # Terminal 2
-cd ~/src/myproject-fix-parser
-airlock up && airlock enter
+cd ~/src/myproject-fix-parser && airlock up && airlock enter
 ```
 
-Each worktree gets its own container (`airlock-myproject-feature-auth`, `airlock-myproject-fix-parser`) with its own isolated home and cache.
+Multiple `airlock enter` calls against the same worktree open additional shell sessions in the same container, just like opening more terminals.
 
-**4. Run agents inside each container**
+### Sharing cache across worktrees
 
-In each container, run your agent of choice.
-Since the workspace mount, home directory, and cache are all per-worktree, agents cannot interfere with each other.
-
-### Overriding name per-worktree (alternative approach)
-
-If you prefer to keep an explicit `name:` in your checked-in `airlock.yaml`, you can override it per-worktree using the local config file (which is gitignored and per-worktree):
-
-```bash
-cd ~/src/myproject-feature-auth
-airlock init   # creates .airlock/ dirs and airlock.local.yaml
-```
-
-Then edit `.airlock/airlock.local.yaml`:
+By default, each worktree gets its own cache (`./.airlock/cache`), meaning every worktree re-downloads dependencies. To share the **package manager download cache**, set an absolute path in `airlock.yaml`:
 
 ```yaml
-name: myproject-feature-auth
+cache: ~/.local/share/airlock/myproject/cache
 ```
 
-This overrides the `name` from `airlock.yaml` for this worktree only.
+This is safe because build caches (Go, npm, pip, cargo) are content-addressed with file locking -- concurrent containers building different branches write different cache keys and deduplicate shared dependencies.
 
-### Listing and tearing down
+> **Note:** This shares the download cache, not `node_modules` or build outputs. Those live in the workspace, which is always per-worktree.
+
+### Sharing home across worktrees
+
+Home can also be shared to get a single-machine feel (same dotfiles, shell history, tool configs):
+
+```yaml
+# .airlock/airlock.local.yaml
+home: ~/.local/share/airlock/myproject/home
+cache: ~/.local/share/airlock/myproject/cache
+```
+
+This behaves like having multiple terminals open on the same machine with direnv switching between project directories. The workspace is isolated per-worktree; everything else is shared.
+
+Keep home **per-worktree** (the default) if you want fully isolated agent state, or **shared** if you prefer the multi-terminal feel.
+
+### Managing containers
 
 ```bash
-airlock list                        # shows all running airlock containers
+airlock list                        # works from any directory
 airlock down myproject-feature-auth # stops and removes a specific container
 ```
 
-### Sharing a download cache across worktrees
-
-By default, each worktree gets its own cache (`./.airlock/cache`). This means every worktree re-downloads dependencies from scratch. To share a **package manager download cache** across all worktrees, set an absolute path in your checked-in `airlock.yaml`:
-
-```yaml
-cache: ~/.airlock/shared-cache
-```
-
-This host directory is mounted at `~/.cache` inside every container. Package managers that respect the XDG cache location (npm, pip, Go modules, etc.) will read and write to this shared cache, so `npm install` or `pip install` in a new worktree pulls from the warm cache instead of re-downloading everything.
-
-> **Note:** This shares the **download cache**, not `node_modules` or installed packages. `node_modules` lives in the workspace (`/workspace/node_modules`), which is always per-worktree since each worktree has its own workspace mount. Different branches can have different dependency versions without conflict.
-
-Keep `home` at the default (`./.airlock/home`) so that shell history, tool config, and agent state remain isolated per worktree.
-
 ### Tips
 
-- **Worktree directory names become container names.** Pick short, descriptive names when creating worktrees (e.g., `../myproject-auth` not `../worktree-for-the-authentication-feature-branch`).
-- **`.airlock/` is per-worktree and gitignored.** Each worktree has independent home state, caches, and local config. Deleting a worktree also deletes its `.airlock/` state.
-- **Containers survive worktree deletion.** Run `airlock down` before removing a worktree, or clean up afterwards with `airlock down <name>`.
-- **Shared Containerfile.** The `Containerfile` is checked into git and shared across worktrees. If a feature branch modifies it, that worktree will build a different image (tagged uniquely since the name differs).
+- **Directory names become container names.** Pick short names for worktrees.
+- **`.airlock/` is per-worktree and gitignored.** Deleting a worktree deletes its `.airlock/` state.
+- **Containers survive worktree deletion.** Run `airlock down` before removing a worktree, or clean up with `airlock down <name>`.
+- **Shared Containerfile.** Checked into git, shared across worktrees. Feature branches that modify it build a different image (tagged uniquely since the name differs).
 
 ---
 
@@ -650,52 +605,22 @@ If it’s too much, remove symlinks and try again.
 
 ---
 
-## Persistence and lifecycle notes
+## Persistence and safety
 
-* `.airlock/home` is **project-scoped and persistent**.
-* Identities remain linked until you remove the symlinks.
-* Tools may write auth caches or tokens into `$HOME`.
+`.airlock/home` persists across container rebuilds. Tools may write auth caches or tokens into `$HOME`, and symlinks remain until removed.
 
-Best practices:
+> **If it’s in `.airlock/home` (or one of the mounted folders), the container can see it. If it’s not, it can’t — including the `.airlock/` folder itself, which is masked from within the container.**
 
-* keep identity **sources** in `~/.config/airlock/identities/`
-* treat `.airlock/` as **safe to delete and recreate** (modulo recreating runtime mutations and installations)
-* prefer `.airlock/cache` for tool caches when configurable
-
-
-> **If it’s in `.airlock/home` (or one of the mounted folders), the container can see it.
-> If it’s not, it can’t — and this includes the `.airlock/` folder itself within your project root, which is masked.**
-
----
-
-
-## Auditing what the sandbox can see
-
-Before entering:
+**Audit what the sandbox can see:**
 
 ```bash
 find .airlock/home -maxdepth 3 -type l -print -exec readlink {} \;
 ```
 
-If you accidentally linked too much, remove it:
-
-```bash
-rm .airlock/home/.ssh   # or remove specific symlinks
-```
-
----
-
-## Notes on persistence and safety
-
-- `.airlock/home` is designed to persist across container rebuilds. That’s great for dev convenience, but it means:
-
-  - tools may write auth caches or tokens into `$HOME`;
-
-  - your symlinks remain until removed.
-
-- For caches and tool state, prefer `.airlock/cache` (if your airlock implementation mounts it), and configure tools to store caches there when possible.
-
-- Keep curated identity material in a shared host folder (like `~/.airlock/identities/…`) rather than sprinkling secrets around your normal `~`.
+**Best practices:**
+- Keep identity sources in `~/.config/airlock/identities/`
+- Treat `.airlock/` as safe to delete and recreate
+- Prefer `.airlock/cache` for tool caches when configurable
 
 
 ## Secrets and API tokens
