@@ -1,0 +1,34 @@
+FROM python:3.12-bookworm
+
+# Install system deps for common scientific packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl bash ca-certificates \
+    build-essential libhdf5-dev libopenblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root dev user
+RUN useradd -m -s /bin/bash dev
+
+USER dev
+WORKDIR /workspace
+
+# Point pip/uv caches at XDG_CACHE_HOME so airlock's cache mount persists them.
+ENV PIP_CACHE_DIR=$HOME/.cache/pip
+ENV UV_CACHE_DIR=$HOME/.cache/uv
+
+# Install uv (fast package manager) + common data science stack
+RUN pip install --no-cache-dir uv
+RUN uv pip install --system \
+    jupyter \
+    jupyterlab \
+    numpy \
+    pandas \
+    matplotlib \
+    scikit-learn \
+    seaborn
+
+# Jupyter notebook port — run with: airlock init -p 8888:8888
+EXPOSE 8888
+
+# Start jupyterlab on `airlock exec -- jupyter lab` or set as default
+# CMD ["jupyter", "lab", "--ip=0.0.0.0", "--no-browser"]

@@ -1,0 +1,23 @@
+FROM node:22-bookworm-slim
+
+# Install common dev tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl bash ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root dev user
+RUN useradd -m -s /bin/bash dev
+
+USER dev
+WORKDIR /workspace
+
+# Point npm/node caches at XDG_CACHE_HOME so airlock's cache mount picks them up.
+# airlock sets XDG_CACHE_HOME=$HOME/.cache, which is mounted from the host.
+ENV NPM_CONFIG_CACHE=$HOME/.cache/npm
+ENV NODE_REPL_HISTORY=$HOME/.node_repl_history
+
+# Install TypeScript toolchain globally (cached in $HOME/.cache/npm)
+RUN npm install -g typescript tsx ts-node
+
+# Default dev server port — override with `airlock init -p 3000:3000`
+EXPOSE 3000

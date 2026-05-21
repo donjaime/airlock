@@ -1,0 +1,21 @@
+FROM golang:1.24-bookworm
+
+# Install common dev tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl bash ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root dev user with the same UID scheme airlock uses
+RUN useradd -m -s /bin/bash dev
+
+USER dev
+WORKDIR /workspace
+
+# Redirect Go caches to XDG_CACHE_HOME so airlock's cache mount persists them.
+# airlock sets XDG_CACHE_HOME=$HOME/.cache, which is mounted from the host.
+ENV GOCACHE=$HOME/.cache/go/build
+ENV GOMODCACHE=$HOME/.cache/go/mod
+ENV GOPATH=$HOME/.cache/go
+
+# Common dev server port — override with `airlock init -p 8080:8080`
+EXPOSE 8080

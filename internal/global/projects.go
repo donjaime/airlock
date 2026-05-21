@@ -11,11 +11,12 @@ import (
 // ProjectEntry records how a project directory is bound to an image and identity.
 // Exactly one of Image or (Containerfile + ImageTag) must be set.
 type ProjectEntry struct {
-	Name          string `yaml:"name"`
-	Image         string `yaml:"image,omitempty"`
-	Containerfile string `yaml:"containerfile,omitempty"`
-	ImageTag      string `yaml:"imageTag,omitempty"`
-	Identity      string `yaml:"identity"`
+	Name          string   `yaml:"name"`
+	Image         string   `yaml:"image,omitempty"`
+	Containerfile string   `yaml:"containerfile,omitempty"`
+	ImageTag      string   `yaml:"imageTag,omitempty"`
+	Identity      string   `yaml:"identity"`
+	Ports         []string `yaml:"ports,omitempty"` // "host:container" pairs
 }
 
 // ResolvedImage returns the image name to pass to the container runtime.

@@ -45,7 +45,7 @@ The project directory is mounted read-write. Nothing from `~/.airlock/` is visib
 ## Commands
 
 ```
-airlock init                     Set up airlock for the current directory
+airlock init [-p host:container] Set up airlock for the current directory
 airlock forget [name]            Remove a project from the airlock index
 
 airlock identity list            List all named identities
@@ -69,6 +69,22 @@ airlock help
 -e KEY=VALUE     Set KEY=VALUE inside the container
 -v               Verbose: print the underlying podman/docker commands
 ```
+
+### Port forwarding
+
+Specify ports at `airlock init` time with `-p`. They are stored in `~/.airlock/projects.yaml` and passed to the container on creation.
+
+```bash
+airlock init -p 3000:3000 -p 5432:5432
+```
+
+Bare port numbers are expanded to `host:container`:
+
+```bash
+airlock init -p 8080   # equivalent to -p 8080:8080
+```
+
+To change ports, re-run `airlock init -p <new-ports>` (stop the container first with `airlock down`).
 
 ---
 
@@ -284,6 +300,45 @@ airlock -e AWS_PROFILE=my-profile enter
 
 ```bash
 find ~/.airlock/identities/<name>/home -maxdepth 3 -type l -print -exec readlink {} \;
+```
+
+---
+
+## Example Containerfiles
+
+The `examples/` directory contains ready-to-use Containerfiles for common project types. Copy the one you want into your project as `Containerfile`, then run `airlock init` and choose "Build from a Containerfile".
+
+| File | Language / Stack | Notes |
+|---|---|---|
+| `Containerfile.typescript` | Node 22 + TypeScript, tsx, ts-node | EXPOSE 3000; npm cache → XDG |
+| `Containerfile.golang` | Go 1.24 | Non-root `dev` user; GOCACHE/GOMODCACHE → XDG |
+| `Containerfile.python-datascience` | Python 3.12, Jupyter, pandas, scikit-learn | EXPOSE 8888; pip/uv cache → XDG |
+| `Containerfile.systems` | Ubuntu 24.04, clang, cmake, gdb | Optional Rust toolchain (commented out) |
+
+All examples:
+- Create a non-root `dev` user so Podman rootless UID mapping works correctly
+- Point package manager caches at `$HOME/.cache` (which airlock mounts from the host identity), so downloaded dependencies survive container rebuilds
+- Use `$HOME` instead of hardcoded paths so the scripts work with any image user
+
+### TypeScript / Node example
+
+```bash
+cp examples/Containerfile.typescript ./Containerfile
+airlock init -p 3000:3000
+airlock up && airlock enter
+# Inside the container:
+npm install
+npx tsx src/index.ts
+```
+
+### Jupyter notebook example
+
+```bash
+cp examples/Containerfile.python-datascience ./Containerfile
+airlock init -p 8888:8888
+airlock up
+airlock exec -- jupyter lab --ip=0.0.0.0 --no-browser
+# Open http://localhost:8888 in your browser
 ```
 
 ---

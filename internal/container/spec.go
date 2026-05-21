@@ -12,6 +12,7 @@ type ContainerSpec struct {
 	WorkDirHost    string // absolute host path (project dir) mounted as the container workdir
 	Identity       string // identity name, for display only
 	OnCreateScript string // absolute host path to on-create.sh; empty if absent
+	Ports          []string // "host:container" pairs forwarded with -p
 	Engine         Engine
 }
 

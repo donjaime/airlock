@@ -33,7 +33,7 @@ Usage:
   airlock [-e var] [-v] <command> [args]
 
 Commands:
-  init                     Set up airlock for the current directory
+  init [-p host:container] Set up airlock for the current directory
   forget [name]            Remove a project from the airlock index
   identity list            List all identities
   identity add <name>      Create a new identity (with setup.sh and on-create.sh templates)
@@ -82,7 +82,11 @@ func main() {
 		fmt.Println(version)
 
 	case "init":
-		runInit()
+		initFlags := flag.NewFlagSet("init", flag.ExitOnError)
+		var portFlags stringSlice
+		initFlags.Var(&portFlags, "p", "Forward port from host to container (host:container or port); repeatable")
+		_ = initFlags.Parse(cmdArgs)
+		runInit([]string(portFlags))
 
 	case "forget":
 		name := ""
@@ -119,6 +123,9 @@ func main() {
 		fmt.Printf("homeDir:   %s\n", spec.HomeHost)
 		fmt.Printf("cacheDir:  %s\n", spec.CacheHost)
 		fmt.Printf("workDir:   %s\n", spec.WorkDirHost)
+		if len(spec.Ports) > 0 {
+			fmt.Printf("ports:     %s\n", strings.Join(spec.Ports, ", "))
+		}
 
 	case "up":
 		gcfg := mustLoadGlobalConfig()
@@ -168,7 +175,7 @@ func main() {
 
 // --- init ---
 
-func runInit() {
+func runInit(portFlags []string) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fatalf("Failed to get current directory: %v\n", err)
@@ -181,14 +188,25 @@ func runInit() {
 
 	fmt.Printf("Setting up airlock for %s\n\n", cwd)
 
+	// Normalize bare port numbers to "port:port"
+	ports := normalizePorts(portFlags)
+
 	// Warn if already initialized
 	if existing, ok := idx.Find(cwd); ok {
 		fmt.Printf("This directory is already initialized:\n")
 		fmt.Printf("  image:    %s\n", existing.ResolvedImage())
-		fmt.Printf("  identity: %s\n\n", existing.Identity)
+		fmt.Printf("  identity: %s\n", existing.Identity)
+		if len(existing.Ports) > 0 {
+			fmt.Printf("  ports:    %s\n", strings.Join(existing.Ports, ", "))
+		}
+		fmt.Println()
 		yes, err := global.PromptConfirm("Re-initialize?")
 		if err != nil || !yes {
 			return
+		}
+		// Preserve existing ports if none specified on the command line
+		if len(ports) == 0 {
+			ports = existing.Ports
 		}
 		fmt.Println()
 	}
@@ -214,6 +232,7 @@ func runInit() {
 		Containerfile: containerfile,
 		ImageTag:      imageTag,
 		Identity:      identityName,
+		Ports:         ports,
 	}
 	idx.Bind(cwd, entry)
 	if err := idx.Save(); err != nil {
@@ -221,6 +240,9 @@ func runInit() {
 	}
 
 	fmt.Printf("Saved to %s\n", filepath.Join(global.Dir(), "projects.yaml"))
+	if len(ports) > 0 {
+		fmt.Printf("Ports:    %s\n", strings.Join(ports, ", "))
+	}
 	fmt.Printf("Run `airlock up` to start the container.\n")
 }
 
@@ -588,6 +610,7 @@ func mustLoadSpec(gcfg *global.GlobalConfig, eng container.Engine) *container.Co
 		WorkDirHost:    cwd,
 		Identity:       entry.Identity,
 		OnCreateScript: onCreateScript,
+		Ports:          entry.Ports,
 		Engine:         eng,
 	}
 }
@@ -638,5 +661,20 @@ func sanitizeName(s string) string {
 
 type stringSlice []string
 
-func (s *stringSlice) String() string  { return strings.Join(*s, ", ") }
-func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
+func (s *stringSlice) String() string         { return strings.Join(*s, ", ") }
+func (s *stringSlice) Set(v string) error     { *s = append(*s, v); return nil }
+
+// normalizePorts converts bare port numbers like "3000" to "3000:3000".
+func normalizePorts(ports []string) []string {
+	if len(ports) == 0 {
+		return nil
+	}
+	out := make([]string, len(ports))
+	for i, p := range ports {
+		if !strings.Contains(p, ":") {
+			p = p + ":" + p
+		}
+		out[i] = p
+	}
+	return out
+}

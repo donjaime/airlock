@@ -1,0 +1,22 @@
+FROM ubuntu:24.04
+
+# Core build toolchain
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl bash ca-certificates \
+    build-essential cmake ninja-build pkg-config \
+    clang clang-format clang-tidy lldb \
+    gdb valgrind \
+    python3 python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root dev user
+RUN useradd -m -s /bin/bash dev
+
+USER dev
+WORKDIR /workspace
+
+# Optional: install Rust toolchain (uncomment to include)
+# RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+# ENV PATH=$HOME/.cargo/bin:$PATH
+# ENV CARGO_HOME=$HOME/.cache/cargo
+# ENV RUSTUP_HOME=$HOME/.cache/rustup
