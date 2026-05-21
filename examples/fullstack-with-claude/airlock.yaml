@@ -1,9 +1,0 @@
-name: my-claude-project
-engine: podman # or docker, or omit
-build:
-  context: .
-  containerfile: ./Containerfile
-
-home: ./.airlock/home
-cache: ./.airlock/cache
-workdir: .

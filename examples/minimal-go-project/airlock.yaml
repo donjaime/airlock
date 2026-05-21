@@ -1,8 +1,0 @@
-name: go-project
-build:
-  context: .
-  containerfile: ./Containerfile
-
-home: ./.airlock/home
-cache: ./.airlock/cache
-workdir: .

@@ -10,8 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-
-	"github.com/donjaime/airlock/internal/config"
 )
 
 type UserConfig struct {
@@ -30,57 +28,28 @@ type Runner struct {
 
 func NewRunner(e Engine) *Runner { return &Runner{Engine: e} }
 
-func (r *Runner) Info(ctx context.Context, cfg *config.Config, absProjectDir string) (string, error) {
-	homeHost := resolveHostPath(absProjectDir, cfg.HomeDir)
-	cacheHost := resolveHostPath(absProjectDir, cfg.CacheDir)
-	workDirHost := resolveHostPath(absProjectDir, cfg.WorkDir)
-
-	image := cfg.Image
-	if cfg.Build != nil {
-		image = cfg.Build.Tag
-	}
-
-	lines := []string{
-		"engine: " + string(r.Engine),
-		"config.name: " + cfg.Name,
-		"projectDir: " + absProjectDir,
-		"containerName: " + containerName(cfg),
-		"image: " + image,
-		"workHostDir: " + workDirHost,
-		"homeHostDir: " + homeHost,
-		"cacheHostDir: " + cacheHost,
-	}
-	return strings.Join(lines, "\n"), nil
-}
-
-func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir string) error {
-	if cfg.Build != nil {
-		if err := r.buildImage(ctx, cfg, absProjectDir); err != nil {
+func (r *Runner) Up(ctx context.Context, spec *ContainerSpec) error {
+	if spec.Containerfile != "" {
+		if err := r.buildImage(ctx, spec); err != nil {
 			return err
 		}
 	}
 
-	image := cfg.Image
-	if cfg.Build != nil {
-		image = cfg.Build.Tag
-	}
-
+	image := spec.ResolvedImage()
 	userConfig, err := r.inspectImage(ctx, image)
 	if err != nil {
 		return err
 	}
 
-	homeHost := resolveHostPath(absProjectDir, cfg.HomeDir)
-	cacheHost := resolveHostPath(absProjectDir, cfg.CacheDir)
-	workDirHost := resolveHostPath(absProjectDir, cfg.WorkDir)
-	if err := os.MkdirAll(homeHost, 0700); err != nil {
+	if err := os.MkdirAll(spec.HomeHost, 0700); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(cacheHost, 0700); err != nil {
+	if err := os.MkdirAll(spec.CacheHost, 0700); err != nil {
 		return err
 	}
 
-	exists, err := r.containerExists(ctx, containerName(cfg))
+	name := containerName(spec)
+	exists, err := r.containerExists(ctx, name)
 	if err != nil {
 		return err
 	}
@@ -93,22 +62,79 @@ func (r *Runner) Up(ctx context.Context, cfg *config.Config, absProjectDir strin
 			userConfig.UID = uid
 			userConfig.GID = gid
 		}
-		if err := r.createContainer(ctx, cfg, userConfig, absProjectDir, homeHost, cacheHost, workDirHost); err != nil {
+		if err := r.createContainer(ctx, spec, userConfig); err != nil {
 			return err
 		}
 	}
 
-	running, err := r.containerRunning(ctx, containerName(cfg))
+	running, err := r.containerRunning(ctx, name)
 	if err != nil {
 		return err
 	}
 	if !running {
-		return r.runCmdInteractive(ctx, r.engineBin(), "start", containerName(cfg))
+		return r.runCmdInteractive(ctx, r.engineBin(), "start", name)
 	}
 	return nil
 }
 
-func (r *Runner) getMergedEnv(cfg *config.Config, u *UserConfig, extraEnv []string) []string {
+func (r *Runner) Enter(ctx context.Context, spec *ContainerSpec, extraEnv []string) error {
+	userConfig, err := r.inspectImage(ctx, spec.ResolvedImage())
+	if err != nil {
+		return err
+	}
+	mergedEnv := r.getMergedEnv(spec, userConfig, extraEnv)
+	args := []string{"exec", "-it", "--user", userConfig.Name}
+	for _, e := range mergedEnv {
+		args = append(args, "-e", e)
+	}
+	args = append(args, containerName(spec), "bash")
+	return r.runCmdInteractive(ctx, r.engineBin(), args...)
+}
+
+func (r *Runner) Exec(ctx context.Context, spec *ContainerSpec, extraEnv []string, cmd []string) error {
+	userConfig, err := r.inspectImage(ctx, spec.ResolvedImage())
+	if err != nil {
+		return err
+	}
+	mergedEnv := r.getMergedEnv(spec, userConfig, extraEnv)
+	args := []string{"exec", "-it", "--user", userConfig.Name}
+	for _, e := range mergedEnv {
+		args = append(args, "-e", e)
+	}
+	args = append(args, containerName(spec))
+	args = append(args, cmd...)
+	return r.runCmdInteractive(ctx, r.engineBin(), args...)
+}
+
+// Down stops and removes the container with the given full container name.
+func (r *Runner) Down(ctx context.Context, name string) error {
+	_ = r.runCmdInteractive(ctx, r.engineBin(), "stop", name)
+	_ = r.runCmdInteractive(ctx, r.engineBin(), "rm", "-f", name)
+	return nil
+}
+
+// List returns the names of all running airlock-* containers.
+func (r *Runner) List(ctx context.Context) ([]string, error) {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s ps --filter name=^airlock- --format {{.Names}}\n", r.engineBin())
+	}
+	cmd := exec.CommandContext(ctx, r.engineBin(), "ps", "--filter", "name=^airlock-", "--format", "{{.Names}}")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list containers: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var names []string
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, nil
+}
+
+func (r *Runner) getMergedEnv(spec *ContainerSpec, u *UserConfig, extraEnv []string) []string {
 	envMap := make(map[string]string)
 
 	// 1. Image defaults
@@ -119,20 +145,17 @@ func (r *Runner) getMergedEnv(cfg *config.Config, u *UserConfig, extraEnv []stri
 		}
 	}
 
-	// 2. Airlock yaml defaults
-	for k, v := range cfg.Env {
-		envMap[k] = v
-	}
-
-	// 3. Command line overrides (-e)
+	// 2. CLI overrides: KEY=VALUE sets directly; KEY alone forwards from host env
 	for _, e := range extraEnv {
 		parts := strings.SplitN(e, "=", 2)
 		if len(parts) == 2 {
 			envMap[parts[0]] = parts[1]
+		} else if val, ok := os.LookupEnv(e); ok {
+			envMap[e] = val
 		}
 	}
 
-	// 4. Airlock internal overrides
+	// 3. Airlock internals (always override)
 	home := u.Home
 	envMap["HOME"] = home
 	envMap["XDG_CACHE_HOME"] = home + "/.cache"
@@ -147,83 +170,6 @@ func (r *Runner) getMergedEnv(cfg *config.Config, u *UserConfig, extraEnv []stri
 	return env
 }
 
-func (r *Runner) Enter(ctx context.Context, cfg *config.Config, absProjectDir string, env []string) error {
-	image := cfg.Image
-	if cfg.Build != nil {
-		image = cfg.Build.Tag
-	}
-	userConfig, err := r.inspectImage(ctx, image)
-	if err != nil {
-		return err
-	}
-
-	mergedEnv := r.getMergedEnv(cfg, userConfig, env)
-
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%s", userConfig.Name)}
-	for _, e := range mergedEnv {
-		args = append(args, "-e", e)
-	}
-	args = append(args, containerName(cfg), "bash")
-	return r.runCmdInteractive(ctx, r.engineBin(), args...)
-}
-
-func (r *Runner) Exec(ctx context.Context, cfg *config.Config, absProjectDir string, env []string, cmd []string) error {
-	image := cfg.Image
-	if cfg.Build != nil {
-		image = cfg.Build.Tag
-	}
-	userConfig, err := r.inspectImage(ctx, image)
-	if err != nil {
-		return err
-	}
-
-	mergedEnv := r.getMergedEnv(cfg, userConfig, env)
-
-	args := []string{"exec", "-it", "--user", fmt.Sprintf("%s", userConfig.Name)}
-	for _, e := range mergedEnv {
-		args = append(args, "-e", e)
-	}
-	args = append(args, containerName(cfg))
-	args = append(args, cmd...)
-	return r.runCmdInteractive(ctx, r.engineBin(), args...)
-}
-
-func (r *Runner) Down(ctx context.Context, cfg *config.Config, name string) error {
-	target := name
-	if target == "" {
-		target = containerName(cfg)
-	} else if !strings.HasPrefix(target, "airlock-") {
-		target = "airlock-" + target
-	}
-	_ = r.runCmdInteractive(ctx, r.engineBin(), "stop", target)
-	_ = r.runCmdInteractive(ctx, r.engineBin(), "rm", "-f", target)
-	return nil
-}
-
-func (r *Runner) List(ctx context.Context) ([]string, error) {
-	// We use --filter name=^airlock- to match containers starting with airlock-
-	// Both podman and docker support this.
-	// We don't use -a because the requirement is to show "running" containers.
-	if r.Verbose {
-		fmt.Fprintf(os.Stderr, "+ %s %s\n", r.engineBin(), strings.Join([]string{"ps", "--filter", "name=^airlock-", "--format", "{{.Names}}"}, " "))
-	}
-	cmd := exec.CommandContext(ctx, r.engineBin(), "ps", "--filter", "name=^airlock-", "--format", "{{.Names}}")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list containers: %w", err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var names []string
-	for _, line := range lines {
-		name := strings.TrimSpace(line)
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return names, nil
-}
-
 func (r *Runner) engineBin() string {
 	if r.Engine == EngineDocker {
 		return "docker"
@@ -231,15 +177,9 @@ func (r *Runner) engineBin() string {
 	return "podman"
 }
 
-func (r *Runner) buildImage(ctx context.Context, cfg *config.Config, absProjectDir string) error {
-	df := cfg.Build.Containerfile
-	if !filepath.IsAbs(df) {
-		df = filepath.Join(absProjectDir, df)
-	}
-	args := []string{"build", "-t", cfg.Build.Tag, "-f", df, cfg.Build.Context}
-	if !filepath.IsAbs(cfg.Build.Context) {
-		args[len(args)-1] = filepath.Join(absProjectDir, cfg.Build.Context)
-	}
+func (r *Runner) buildImage(ctx context.Context, spec *ContainerSpec) error {
+	context := filepath.Dir(spec.Containerfile)
+	args := []string{"build", "-t", spec.ImageTag, "-f", spec.Containerfile, context}
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
@@ -263,7 +203,6 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, e
 	if err := json.Unmarshal(out, &data); err != nil {
 		return nil, fmt.Errorf("failed to parse image inspect output: %w", err)
 	}
-
 	if len(data) == 0 {
 		return nil, fmt.Errorf("no data returned from image inspect %s", image)
 	}
@@ -272,27 +211,25 @@ func (r *Runner) inspectImage(ctx context.Context, image string) (*UserConfig, e
 	workdir := data[0].Config.WorkingDir
 	env := data[0].Config.Env
 
-	// Default: images with no USER directive run as root
 	if userStr == "" {
 		userStr = "root"
 	}
+	// Default workdir for images that don't set one
+	if workdir == "" || workdir == "/" {
+		workdir = "/workspace"
+	}
 
-	userConfig := &UserConfig{
+	uc := &UserConfig{
 		Name:    userStr,
 		WorkDir: workdir,
 		Env:     env,
 	}
-
-	// Now we need to find the home directory. This is tricky because it depends on the user inside the container.
-	// Common convention is /home/username or /root.
-	// If we have a username but not UID/GID, we might need to look it up in the image (e.g. /etc/passwd).
-	// For now, let's make some assumptions or try to find it.
-	if userConfig.Name == "root" {
-		userConfig.Home = "/root"
-	} else if userConfig.Name != "" {
-		userConfig.Home = "/home/" + userConfig.Name
+	if uc.Name == "root" {
+		uc.Home = "/root"
+	} else {
+		uc.Home = "/home/" + uc.Name
 	}
-	return userConfig, nil
+	return uc, nil
 }
 
 func (r *Runner) resolveContainerUID(ctx context.Context, image, user string) (int, int, error) {
@@ -341,54 +278,28 @@ func (r *Runner) containerRunning(ctx context.Context, name string) (bool, error
 	return strings.TrimSpace(string(out)) == "true", nil
 }
 
-func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *UserConfig, absProjectDir, homeHost, cacheHost, workDirHost string) error {
-	name := containerName(cfg)
-
-	mergedEnv := r.getMergedEnv(cfg, u, nil)
+func (r *Runner) createContainer(ctx context.Context, spec *ContainerSpec, u *UserConfig) error {
+	name := containerName(spec)
+	mergedEnv := r.getMergedEnv(spec, u, nil)
 
 	var envArgs []string
 	for _, e := range mergedEnv {
 		envArgs = append(envArgs, "-e", e)
 	}
 
-	home := u.Home
-
 	label := volumeLabel()
 	mountArgs := []string{
-		"-v", homeHost + ":" + home + label,
-		"-v", cacheHost + ":" + home + "/.cache" + label,
+		"-v", spec.WorkDirHost + ":" + u.WorkDir + label,
+		"-v", spec.HomeHost + ":" + u.Home + label,
+		"-v", spec.CacheHost + ":" + u.Home + "/.cache" + label,
 	}
-
-	workdirMounted := false
-	for _, m := range cfg.Mounts {
-		src := resolveHostPath(absProjectDir, m.Source)
-		if m.Target == u.WorkDir {
-			workdirMounted = true
-		}
-		mode := m.Mode
-		if mode == "" {
-			mode = "rw"
-		}
-		mountOpt := mode
-		if label != "" {
-			mountOpt += "," + strings.TrimPrefix(label, ":")
-		}
-		mountArgs = append(mountArgs, "-v", fmt.Sprintf("%s:%s:%s", src, m.Target, mountOpt))
-	}
-
-	if !workdirMounted {
-		mountArgs = append([]string{"-v", workDirHost + ":" + u.WorkDir + label}, mountArgs...)
-	}
-
-	// Always hide .airlock folder from the working directory mount
-	mountArgs = append(mountArgs, "-v", u.WorkDir+"/.airlock")
 
 	args := []string{
 		"run", "-d",
 		"--init",
 		"--name", name,
 		"-w", u.WorkDir,
-		"--user", fmt.Sprintf("%s", u.Name),
+		"--user", u.Name,
 	}
 	if r.Engine == EnginePodman {
 		args = append(args, fmt.Sprintf("--userns=keep-id:uid=%d,gid=%d", u.UID, u.GID))
@@ -396,11 +307,7 @@ func (r *Runner) createContainer(ctx context.Context, cfg *config.Config, u *Use
 	args = append(args, envArgs...)
 	args = append(args, mountArgs...)
 	args = append(args, "--hostname", "airlock")
-	image := cfg.Image
-	if cfg.Build != nil {
-		image = cfg.Build.Tag
-	}
-	args = append(args, image)
+	args = append(args, spec.ResolvedImage())
 	args = append(args, "sleep", "infinity")
 
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
@@ -417,15 +324,8 @@ func (r *Runner) runCmdInteractive(ctx context.Context, bin string, args ...stri
 	return cmd.Run()
 }
 
-func containerName(cfg *config.Config) string {
-	return "airlock-" + cfg.Name
-}
-
-func resolveHostPath(projectAbs, p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	return filepath.Clean(filepath.Join(projectAbs, p))
+func containerName(spec *ContainerSpec) string {
+	return "airlock-" + spec.Name
 }
 
 func volumeLabel() string {
