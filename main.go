@@ -191,34 +191,33 @@ func runInit(portFlags []string) {
 	// Normalize bare port numbers to "port:port"
 	ports := normalizePorts(portFlags)
 
-	// Warn if already initialized
-	if existing, ok := idx.Find(cwd); ok {
+	// Check if already initialized
+	existing, _ := idx.Find(cwd)
+	if existing != nil {
 		fmt.Printf("This directory is already initialized:\n")
 		fmt.Printf("  image:    %s\n", existing.ResolvedImage())
 		fmt.Printf("  identity: %s\n", existing.Identity)
 		if len(existing.Ports) > 0 {
 			fmt.Printf("  ports:    %s\n", strings.Join(existing.Ports, ", "))
 		}
-		fmt.Println()
-		yes, err := global.PromptConfirm("Re-initialize?")
-		if err != nil || !yes {
-			return
-		}
+		fmt.Printf("\nPress Enter at each prompt to keep the current setting.\n\n")
 		// Preserve existing ports if none specified on the command line
 		if len(ports) == 0 {
 			ports = existing.Ports
 		}
-		fmt.Println()
 	}
 
 	// Step 1: pick image
-	image, containerfile, imageTag := promptImage(idx, filepath.Base(cwd))
+	image, containerfile, imageTag := promptImage(idx, filepath.Base(cwd), existing)
 
 	// Step 2: pick identity
-	identityName := promptIdentity()
+	identityName := promptIdentity(existing)
 
 	// Step 3: project name (with collision warning)
 	defaultName := sanitizeName(filepath.Base(cwd))
+	if existing != nil {
+		defaultName = existing.Name
+	}
 	warnNameCollisions(idx, defaultName, cwd)
 	projectName, err := global.PromptText("Project name", defaultName)
 	if err != nil {
@@ -246,35 +245,62 @@ func runInit(portFlags []string) {
 	fmt.Printf("Run `airlock up` to start the container.\n")
 }
 
-func promptImage(idx *global.ProjectIndex, baseName string) (image, containerfile, imageTag string) {
+func promptImage(idx *global.ProjectIndex, baseName string, existing *global.ProjectEntry) (image, containerfile, imageTag string) {
 	usedImages := idx.UsedImages()
 
-	choices := make([]string, 0, len(usedImages)+2)
+	var choices []string
+	defaultIdx := -1
+
+	if existing != nil {
+		var label string
+		if existing.Containerfile != "" {
+			label = fmt.Sprintf("Keep current (Containerfile → %s)", existing.ImageTag)
+		} else {
+			label = fmt.Sprintf("Keep current (%s)", existing.Image)
+		}
+		choices = append(choices, label)
+		defaultIdx = 0
+	}
 	choices = append(choices, usedImages...)
 	choices = append(choices, "Enter a different image ref...")
 	choices = append(choices, "Build from a Containerfile...")
 
-	if len(usedImages) == 0 {
-		fmt.Println("No previously used images on this system.")
-	} else {
-		fmt.Println("Previously used images:")
+	if existing == nil {
+		if len(usedImages) == 0 {
+			fmt.Println("No previously used images on this system.")
+		} else {
+			fmt.Println("Previously used images:")
+		}
 	}
-	picked, err := global.PromptSelect("Select image", choices)
+
+	picked, err := global.PromptSelectDefault("Select image", choices, defaultIdx)
 	if err != nil {
 		fatalf("Selection failed: %v\n", err)
 	}
 	fmt.Println()
 
+	// "Keep current" was selected
+	if existing != nil && picked == 0 {
+		return existing.Image, existing.Containerfile, existing.ImageTag
+	}
+
+	// Adjust index past the "Keep current" entry
+	offset := 0
+	if existing != nil {
+		offset = 1
+	}
+	adjusted := picked - offset
+
 	switch {
-	case picked < len(usedImages):
-		image = usedImages[picked]
-	case choices[picked] == "Enter a different image ref...":
+	case adjusted < len(usedImages):
+		image = usedImages[adjusted]
+	case adjusted == len(usedImages): // "Enter a different image ref..."
 		image, err = global.PromptText("Image ref (e.g. ubuntu:24.04, docker.io/golang:1.22)", "")
 		if err != nil || image == "" {
 			fatalf("No image specified.\n")
 		}
 		fmt.Println()
-	default: // Build from Containerfile
+	default: // "Build from a Containerfile..."
 		containerfile, err = global.PromptText("Containerfile path", "./Containerfile")
 		if err != nil || containerfile == "" {
 			fatalf("No Containerfile path specified.\n")
@@ -293,13 +319,13 @@ func promptImage(idx *global.ProjectIndex, baseName string) (image, containerfil
 	return
 }
 
-func promptIdentity() string {
+func promptIdentity(existing *global.ProjectEntry) string {
 	identities, err := global.ListIdentities()
 	if err != nil {
 		fatalf("Failed to list identities: %v\n", err)
 	}
 
-	if len(identities) == 0 {
+	if len(identities) == 0 && existing == nil {
 		fmt.Println("No identities found. Creating a default identity automatically.")
 		if _, err := global.CreateIdentity("default"); err != nil {
 			fatalf("Failed to create default identity: %v\n", err)
@@ -308,21 +334,37 @@ func promptIdentity() string {
 		return "default"
 	}
 
-	choices := make([]string, 0, len(identities)+1)
+	var choices []string
+	defaultIdx := -1
+
+	if existing != nil {
+		choices = append(choices, fmt.Sprintf("Keep current (%s)", existing.Identity))
+		defaultIdx = 0
+	}
 	for _, id := range identities {
 		choices = append(choices, id.Name)
 	}
 	choices = append(choices, "Create a new identity...")
 
 	fmt.Println("Available identities:")
-	picked, err := global.PromptSelect("Select identity", choices)
+	picked, err := global.PromptSelectDefault("Select identity", choices, defaultIdx)
 	if err != nil {
 		fatalf("Selection failed: %v\n", err)
 	}
 	fmt.Println()
 
-	if picked < len(identities) {
-		return identities[picked].Name
+	if existing != nil && picked == 0 {
+		return existing.Identity
+	}
+
+	offset := 0
+	if existing != nil {
+		offset = 1
+	}
+	adjusted := picked - offset
+
+	if adjusted < len(identities) {
+		return identities[adjusted].Name
 	}
 
 	// Create new identity

@@ -11,21 +11,39 @@ import (
 
 // PromptSelect prints a numbered list and returns the 0-based index chosen by the user.
 func PromptSelect(prompt string, choices []string) (int, error) {
-	return promptSelect(os.Stdin, os.Stderr, prompt, choices)
+	return promptSelect(os.Stdin, os.Stderr, prompt, choices, -1)
 }
 
-func promptSelect(in io.Reader, out io.Writer, prompt string, choices []string) (int, error) {
+// PromptSelectDefault is like PromptSelect but pressing Enter selects defaultIdx.
+func PromptSelectDefault(prompt string, choices []string, defaultIdx int) (int, error) {
+	return promptSelect(os.Stdin, os.Stderr, prompt, choices, defaultIdx)
+}
+
+// promptSelect is the internal implementation. defaultIdx < 0 means no default.
+func promptSelect(in io.Reader, out io.Writer, prompt string, choices []string, defaultIdx int) (int, error) {
 	for i, c := range choices {
-		fmt.Fprintf(out, "  %d. %s\n", i+1, c)
+		if i == defaultIdx {
+			fmt.Fprintf(out, "  %d. %s  ←\n", i+1, c)
+		} else {
+			fmt.Fprintf(out, "  %d. %s\n", i+1, c)
+		}
 	}
 	r := bufio.NewReader(in)
 	for {
-		fmt.Fprintf(out, "%s [1-%d]: ", prompt, len(choices))
+		if defaultIdx >= 0 {
+			fmt.Fprintf(out, "%s [1-%d, Enter=%d]: ", prompt, len(choices), defaultIdx+1)
+		} else {
+			fmt.Fprintf(out, "%s [1-%d]: ", prompt, len(choices))
+		}
 		line, err := r.ReadString('\n')
 		if err != nil {
 			return 0, err
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(line))
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" && defaultIdx >= 0 {
+			return defaultIdx, nil
+		}
+		n, err := strconv.Atoi(trimmed)
 		if err == nil && n >= 1 && n <= len(choices) {
 			return n - 1, nil
 		}
