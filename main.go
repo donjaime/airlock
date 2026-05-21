@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -35,7 +36,8 @@ Commands:
   init                     Set up airlock for the current directory
   forget [name]            Remove a project from the airlock index
   identity list            List all identities
-  identity add <name>      Create a new identity
+  identity add <name>      Create a new identity (with setup.sh and on-create.sh templates)
+  identity setup <name>    Run setup.sh on the host (wire up dotfiles/credentials)
   identity remove <name>   Remove an identity (requires --force to delete files)
   up                       Build image (if needed) and start the container
   enter                    Open an interactive shell in the container
@@ -391,9 +393,15 @@ func runForget(ctx context.Context, nameArg string) {
 
 func runIdentity(args []string) {
 	if len(args) < 1 {
-		fatalf("Usage: airlock identity <list|add|remove>\n")
+		fatalf("Usage: airlock identity <list|add|setup|remove>\n")
 	}
 	switch args[0] {
+	case "setup":
+		if len(args) < 2 {
+			fatalf("Usage: airlock identity setup <name>\n")
+		}
+		runIdentitySetup(args[1])
+
 	case "list":
 		ids, err := global.ListIdentities()
 		if err != nil {
@@ -437,8 +445,31 @@ func runIdentity(args []string) {
 		fmt.Printf("Removed identity %q.\n", name)
 
 	default:
-		fatalf("Unknown identity subcommand: %s\nUsage: airlock identity <list|add|remove>\n", args[0])
+		fatalf("Unknown identity subcommand: %s\nUsage: airlock identity <list|add|setup|remove>\n", args[0])
 	}
+}
+
+func runIdentitySetup(name string) {
+	identity, err := global.GetIdentity(name)
+	if err != nil {
+		fatalf("Identity %q not found: %v\n", name, err)
+	}
+	setupScript := filepath.Join(identity.Dir(), "setup.sh")
+	if isEffectivelyEmpty(setupScript) {
+		fmt.Printf("setup.sh for identity %q contains only the template (no active commands).\n", name)
+		fmt.Printf("Edit %s to wire up your dotfiles, then re-run.\n", setupScript)
+		return
+	}
+	fmt.Printf("Running setup.sh for identity %q...\n", name)
+	cmd := exec.Command("bash", setupScript)
+	cmd.Env = append(os.Environ(), "IDENTITY_HOME="+identity.HomeDir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		fatalf("setup.sh failed: %v\n", err)
+	}
+	fmt.Println("Done.")
 }
 
 // --- list ---
@@ -540,17 +571,41 @@ func mustLoadSpec(gcfg *global.GlobalConfig, eng container.Engine) *container.Co
 	if err != nil {
 		fatalf("Identity %q not found: %v\nRe-run `airlock init` to fix the configuration.\n", entry.Identity, err)
 	}
-	return &container.ContainerSpec{
-		Name:          entry.Name,
-		Image:         entry.Image,
-		Containerfile: entry.Containerfile,
-		ImageTag:      entry.ImageTag,
-		HomeHost:      identity.HomeDir,
-		CacheHost:     identity.CacheDir,
-		WorkDirHost:   cwd,
-		Identity:      entry.Identity,
-		Engine:        eng,
+
+	// Resolve on-create.sh — only set if the file actually exists and is non-empty
+	onCreateScript := filepath.Join(identity.Dir(), "on-create.sh")
+	if isEffectivelyEmpty(onCreateScript) {
+		onCreateScript = ""
 	}
+
+	return &container.ContainerSpec{
+		Name:           entry.Name,
+		Image:          entry.Image,
+		Containerfile:  entry.Containerfile,
+		ImageTag:       entry.ImageTag,
+		HomeHost:       identity.HomeDir,
+		CacheHost:      identity.CacheDir,
+		WorkDirHost:    cwd,
+		Identity:       entry.Identity,
+		OnCreateScript: onCreateScript,
+		Engine:         eng,
+	}
+}
+
+// isEffectivelyEmpty reports whether a file is absent or contains only
+// comments and whitespace (i.e. the template has not been edited).
+func isEffectivelyEmpty(path string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			return false
+		}
+	}
+	return true
 }
 
 func newRunner(eng container.Engine) *container.Runner {

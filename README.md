@@ -160,8 +160,41 @@ An identity is a named pair of host directories (`home/` and `cache/`) that get 
 ```bash
 airlock identity list
 airlock identity add work
+airlock identity setup work      # run setup.sh to wire up dotfiles
 airlock identity remove old-identity --force
 ```
+
+### Home directory bootstrapping
+
+When `airlock up` starts a container for the first time, it automatically seeds the identity's `home/` directory with the image's `/etc/skel` defaults. This gives you a working shell (`.bashrc`, `.profile`, basic prompt) immediately, with no configuration.
+
+Each identity also gets two hook scripts created alongside `home/` and `cache/`:
+
+```
+~/.airlock/identities/<name>/
+  setup.sh        ← runs on the HOST; wire up dotfiles and credentials
+  on-create.sh    ← runs INSIDE the container on first creation; install tools
+  home/
+  cache/
+```
+
+**`setup.sh`** — host-side setup, run explicitly with `airlock identity setup <name>`. Good for symlinking files from a dotfiles repo or credential store. The script receives `IDENTITY_HOME` pointing to the identity's `home/` directory. Safe to re-run at any time.
+
+```bash
+# ~/.airlock/identities/work/setup.sh
+ln -sf ~/dotfiles/.gitconfig  "$IDENTITY_HOME/.gitconfig"
+ln -sf ~/dotfiles/.bashrc     "$IDENTITY_HOME/.bashrc"
+```
+
+**`on-create.sh`** — runs inside the container automatically on first `airlock up`. Good for installing shell frameworks, setting git global config, or configuring version managers. Always use `$HOME` (not hardcoded paths like `/home/ubuntu`) so the script works with any image.
+
+```bash
+# ~/.airlock/identities/work/on-create.sh
+git config --global user.name  "Jaime"
+git config --global user.email "jaime@example.com"
+```
+
+Both scripts start as commented-out templates. Airlock only runs `on-create.sh` if it contains at least one non-comment line. A sentinel file (`$HOME/.airlock-bootstrapped`) prevents re-running on subsequent `airlock up` calls.
 
 ---
 

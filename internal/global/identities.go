@@ -12,6 +12,11 @@ type Identity struct {
 	CacheDir string
 }
 
+// Dir returns the identity's root directory (parent of home/ and cache/).
+func (id *Identity) Dir() string {
+	return filepath.Dir(id.HomeDir)
+}
+
 func identitiesDir() string {
 	return filepath.Join(Dir(), "identities")
 }
@@ -20,7 +25,7 @@ func identityDir(name string) string {
 	return filepath.Join(identitiesDir(), name)
 }
 
-// CreateIdentity creates home/ and cache/ subdirs for a named identity.
+// CreateIdentity creates home/, cache/, and template hook scripts for a named identity.
 func CreateIdentity(name string) (*Identity, error) {
 	home := filepath.Join(identityDir(name), "home")
 	cache := filepath.Join(identityDir(name), "cache")
@@ -30,7 +35,11 @@ func CreateIdentity(name string) (*Identity, error) {
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return nil, err
 	}
-	return &Identity{Name: name, HomeDir: home, CacheDir: cache}, nil
+	id := &Identity{Name: name, HomeDir: home, CacheDir: cache}
+	if err := writeTemplateScripts(id); err != nil {
+		return nil, err
+	}
+	return id, nil
 }
 
 // GetIdentity returns the Identity for name, or an error if it doesn't exist.
@@ -87,3 +96,65 @@ func RemoveIdentity(name string, force bool) error {
 	}
 	return os.RemoveAll(dir)
 }
+
+func writeTemplateScripts(id *Identity) error {
+	setupPath := filepath.Join(id.Dir(), "setup.sh")
+	if _, err := os.Stat(setupPath); os.IsNotExist(err) {
+		if err := os.WriteFile(setupPath, []byte(setupShTemplate), 0755); err != nil {
+			return err
+		}
+	}
+	onCreatePath := filepath.Join(id.Dir(), "on-create.sh")
+	if _, err := os.Stat(onCreatePath); os.IsNotExist(err) {
+		if err := os.WriteFile(onCreatePath, []byte(onCreateShTemplate), 0755); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+const setupShTemplate = `#!/usr/bin/env bash
+# setup.sh — runs on the HOST to prepare this identity's home directory.
+#
+# Run with:   airlock identity setup <name>
+# Safe to re-run (use ln -sf for idempotent symlinks).
+#
+# IDENTITY_HOME is set to the absolute path of this identity's home/ directory.
+# Use it to wire up files from your dotfiles repo or credential store.
+# Always use $IDENTITY_HOME (not hardcoded paths) so this works on any machine.
+
+# Examples:
+#
+# Link your git config:
+#   ln -sf ~/dotfiles/.gitconfig "$IDENTITY_HOME/.gitconfig"
+#
+# Link your shell config:
+#   ln -sf ~/dotfiles/.bashrc "$IDENTITY_HOME/.bashrc"
+#
+# Link an SSH key (one key at a time — never the whole ~/.ssh dir):
+#   mkdir -p "$IDENTITY_HOME/.ssh"
+#   chmod 700 "$IDENTITY_HOME/.ssh"
+#   ln -sf ~/.config/airlock/identities/myid/.ssh/id_ed25519 "$IDENTITY_HOME/.ssh/id_ed25519"
+`
+
+const onCreateShTemplate = `#!/usr/bin/env bash
+# on-create.sh — runs INSIDE the container on first creation.
+#
+# Triggered automatically by: airlock up (once per container lifetime).
+# $HOME and $USER are set to the container image's user.
+#
+# Always use $HOME (not hardcoded paths like /home/ubuntu) so this script
+# works correctly with any container image, regardless of the username.
+
+# Examples:
+#
+# Set git identity:
+#   git config --global user.name  "Your Name"
+#   git config --global user.email "you@example.com"
+#
+# Install a shell prompt:
+#   curl -fsSL https://starship.rs/install.sh | sh -s -- --yes
+#
+# Install a Node version manager:
+#   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash
+`

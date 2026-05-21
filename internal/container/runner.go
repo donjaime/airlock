@@ -72,9 +72,46 @@ func (r *Runner) Up(ctx context.Context, spec *ContainerSpec) error {
 		return err
 	}
 	if !running {
-		return r.runCmdInteractive(ctx, r.engineBin(), "start", name)
+		if err := r.runCmd(ctx, r.engineBin(), "start", name); err != nil {
+			return err
+		}
 	}
-	return nil
+
+	return r.bootstrapHome(ctx, spec, userConfig)
+}
+
+// bootstrapHome seeds a fresh identity home dir with /etc/skel defaults and runs
+// on-create.sh if present. Guarded by a sentinel file so it only runs once.
+func (r *Runner) bootstrapHome(ctx context.Context, spec *ContainerSpec, u *UserConfig) error {
+	sentinel := filepath.Join(spec.HomeHost, ".airlock-bootstrapped")
+	if _, err := os.Stat(sentinel); err == nil {
+		return nil // already bootstrapped
+	}
+
+	name := containerName(spec)
+	fmt.Println("Bootstrapping home directory...")
+
+	// Layer 1: copy /etc/skel into $HOME (distro-appropriate shell defaults)
+	skelScript := fmt.Sprintf(`[ -d /etc/skel ] && cp -rn /etc/skel/. "%s/" 2>/dev/null || true`, u.Home)
+	if err := r.runCmd(ctx, r.engineBin(), "exec", "--user", u.Name, name, "sh", "-c", skelScript); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not copy /etc/skel (continuing): %v\n", err)
+	}
+
+	// Layer 2: run on-create.sh inside the container if provided
+	if spec.OnCreateScript != "" {
+		fmt.Println("Running on-create.sh...")
+		tmpPath := "/tmp/.airlock-on-create.sh"
+		if err := r.runCmd(ctx, r.engineBin(), "cp", spec.OnCreateScript, name+":"+tmpPath); err != nil {
+			return fmt.Errorf("failed to copy on-create.sh into container: %w", err)
+		}
+		runScript := fmt.Sprintf(`bash "%s"; ec=$?; rm -f "%s"; exit $ec`, tmpPath, tmpPath)
+		if err := r.runCmdInteractive(ctx, r.engineBin(), "exec", "--user", u.Name, name, "sh", "-c", runScript); err != nil {
+			return fmt.Errorf("on-create.sh failed: %w", err)
+		}
+	}
+
+	// Write sentinel to prevent re-running
+	return os.WriteFile(sentinel, []byte(""), 0600)
 }
 
 func (r *Runner) Enter(ctx context.Context, spec *ContainerSpec, extraEnv []string) error {
@@ -321,6 +358,19 @@ func (r *Runner) runCmdInteractive(ctx context.Context, bin string, args ...stri
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+// runCmd runs a non-interactive command, piping stdout/stderr to the terminal but
+// not connecting stdin. Used for background operations like starting containers and
+// copying files.
+func (r *Runner) runCmd(ctx context.Context, bin string, args ...string) error {
+	if r.Verbose {
+		fmt.Fprintf(os.Stderr, "+ %s %s\n", bin, strings.Join(args, " "))
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 

@@ -1,6 +1,7 @@
 package global
 
 import (
+	"os"
 	"testing"
 )
 
@@ -202,5 +203,42 @@ func TestListIdentitiesEmpty(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Errorf("expected empty list, got %d", len(ids))
+	}
+}
+
+func TestCreateIdentityWritesTemplates(t *testing.T) {
+	setTestDir(t)
+	id, err := CreateIdentity("myid")
+	if err != nil {
+		t.Fatalf("CreateIdentity: %v", err)
+	}
+
+	setupPath := id.Dir() + "/setup.sh"
+	onCreatePath := id.Dir() + "/on-create.sh"
+
+	for _, p := range []string{setupPath, onCreatePath} {
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Errorf("expected %s to exist: %v", p, err)
+			continue
+		}
+		if info.Mode()&0111 == 0 {
+			t.Errorf("%s should be executable", p)
+		}
+		b, _ := os.ReadFile(p)
+		if len(b) == 0 {
+			t.Errorf("%s should not be empty (template content expected)", p)
+		}
+	}
+}
+
+func TestIdentityDir(t *testing.T) {
+	setTestDir(t)
+	id, _ := CreateIdentity("dirid")
+	if id.Dir() == id.HomeDir {
+		t.Error("Dir() should be parent of HomeDir")
+	}
+	if id.Dir() == "" {
+		t.Error("Dir() should not be empty")
 	}
 }
