@@ -4,11 +4,4 @@
 .DS_Store
 *~
 .idea/
-
-# The airlock binary
-airlock
-
-# airlock state (contains credentials + install artifacts)
-.airlock/
-
 CLAUDE.md

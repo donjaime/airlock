@@ -1,9 +1,0 @@
-name: airlock
-engine: podman
-build:
-  context: .
-  containerfile: ./Containerfile
-
-home: ./.airlock/home
-cache: ./.airlock/cache
-workdir: .
