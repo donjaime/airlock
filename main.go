@@ -40,8 +40,8 @@ Commands:
   identity setup <name>    Run setup.sh on the host (wire up dotfiles/credentials)
   identity remove <name>   Remove an identity (requires --force to delete files)
   up                       Build image (if needed) and start the container
-  enter                    Open an interactive shell in the container
-  exec -- <cmd>            Run a command inside the container
+  enter [name]             Open an interactive shell in the container
+  exec [name] -- <cmd>     Run a command inside the container
   down [name]              Stop and remove a container
   list                     List all known projects with status
   info                     Show resolved config for current directory
@@ -140,7 +140,7 @@ func main() {
 		gcfg := mustLoadGlobalConfig()
 		eng := mustDetectEngine(gcfg.Engine)
 		r := newRunner(eng)
-		spec := mustLoadSpec(gcfg, eng)
+		spec := mustResolveSpec(gcfg, eng, cmdArgs)
 		if err := ensureRunning(ctx, r, spec); err != nil {
 			fatalf("up error: %v\n", err)
 		}
@@ -149,6 +149,12 @@ func main() {
 		}
 
 	case "exec":
+		// Optional project name before --: airlock exec [name] -- <cmd>
+		var execName string
+		if len(cmdArgs) > 0 && cmdArgs[0] != "--" {
+			execName = cmdArgs[0]
+			cmdArgs = cmdArgs[1:]
+		}
 		if len(cmdArgs) == 0 {
 			fatalf("exec requires a command, e.g. airlock exec -- go test ./...\n")
 		}
@@ -158,7 +164,11 @@ func main() {
 		gcfg := mustLoadGlobalConfig()
 		eng := mustDetectEngine(gcfg.Engine)
 		r := newRunner(eng)
-		spec := mustLoadSpec(gcfg, eng)
+		nameArg := []string{}
+		if execName != "" {
+			nameArg = []string{execName}
+		}
+		spec := mustResolveSpec(gcfg, eng, nameArg)
 		if err := ensureRunning(ctx, r, spec); err != nil {
 			fatalf("up error: %v\n", err)
 		}
@@ -618,6 +628,36 @@ func mustDetectEngine(preferred string) container.Engine {
 	return eng
 }
 
+// mustResolveSpec loads the ContainerSpec for the current directory (no args)
+// or by project name (args[0]). Used by enter/exec to support working from
+// any directory via `airlock enter <name>`.
+func mustResolveSpec(gcfg *global.GlobalConfig, eng container.Engine, args []string) *container.ContainerSpec {
+	if len(args) == 0 {
+		return mustLoadSpec(gcfg, eng)
+	}
+	name := args[0]
+	idx, err := global.LoadProjectIndex()
+	if err != nil {
+		fatalf("Failed to load project index: %v\n", err)
+	}
+	paths := idx.FindByName(name)
+	if len(paths) == 0 {
+		fatalf("No project named %q found. Run `airlock list` to see known projects.\n", name)
+	}
+	var projectPath string
+	if len(paths) == 1 {
+		projectPath = paths[0]
+	} else {
+		fmt.Printf("Multiple projects named %q:\n", name)
+		i, err := global.PromptSelect("Which one?", paths)
+		if err != nil {
+			fatalf("Selection failed: %v\n", err)
+		}
+		projectPath = paths[i]
+	}
+	return mustLoadSpecFromPath(projectPath, idx, eng)
+}
+
 func mustLoadSpec(gcfg *global.GlobalConfig, eng container.Engine) *container.ContainerSpec {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -627,16 +667,22 @@ func mustLoadSpec(gcfg *global.GlobalConfig, eng container.Engine) *container.Co
 	if err != nil {
 		fatalf("Failed to load project index: %v\n", err)
 	}
-	entry, ok := idx.Find(cwd)
-	if !ok {
+	if _, ok := idx.Find(cwd); !ok {
 		fatalf("This directory is not initialized. Run: airlock init\n")
+	}
+	return mustLoadSpecFromPath(cwd, idx, eng)
+}
+
+func mustLoadSpecFromPath(projectPath string, idx *global.ProjectIndex, eng container.Engine) *container.ContainerSpec {
+	entry, ok := idx.Find(projectPath)
+	if !ok {
+		fatalf("No project entry found for %s\n", projectPath)
 	}
 	identity, err := global.GetIdentity(entry.Identity)
 	if err != nil {
 		fatalf("Identity %q not found: %v\nRe-run `airlock init` to fix the configuration.\n", entry.Identity, err)
 	}
 
-	// Resolve on-create.sh — only set if the file actually exists and is non-empty
 	onCreateScript := filepath.Join(identity.Dir(), "on-create.sh")
 	if isEffectivelyEmpty(onCreateScript) {
 		onCreateScript = ""
@@ -649,7 +695,7 @@ func mustLoadSpec(gcfg *global.GlobalConfig, eng container.Engine) *container.Co
 		ImageTag:       entry.ImageTag,
 		HomeHost:       identity.HomeDir,
 		CacheHost:      identity.CacheDir,
-		WorkDirHost:    cwd,
+		WorkDirHost:    projectPath,
 		Identity:       entry.Identity,
 		OnCreateScript: onCreateScript,
 		Ports:          entry.Ports,

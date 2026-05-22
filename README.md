@@ -1,44 +1,123 @@
 # airlock
 
-A lightweight CLI to create **persistent container sandboxes** for local development — isolating your system from untrusted code, supply-chain attacks, and agent-driven automation.
+Persistent container sandboxes for local development. Run AI coding agents, untrusted dependencies, and one-off experiments without giving them access to your home directory.
 
-`airlock` was inspired by **Fedora Toolbx** for mutable, local dev workflows, with additional asks:
-- **Container isolation** to limit damage from supply-chain attacks (malicious npm/pip install scripts) and create a safer sandbox for agentic tools
-- **Surgical persistent state**: named, reusable identity directories (`home/` + `cache/`) that survive container rebuilds
-- **Zero repo invasion**: all airlock state lives in `~/.airlock/` — no files are added to your project
-- **Podman-rootless first** (Docker also supported)
+`airlock` composes three independent things — a **container image**, a **persistent identity**, and your **project directory** — into a sandboxed dev environment you can drop into with `airlock enter`. State you want to keep (shell history, auth tokens, package caches) lives in the identity. State you don't want to keep (random `npm install` postinstall scripts, an agent writing files where it shouldn't) stays in the container and gets wiped on rebuild.
+
+```
+        Image                  Identity                 Project
+   ┌───────────────┐    ┌──────────────────────┐   ┌──────────────┐
+   │ golang:1.25   │    │  ~/.airlock/         │   │ ~/repos/a    │
+   │ + claude code │    │   identities/work/   │   │              │
+   │ + opencode    │    │     home/  ← $HOME   │   │ ~/repos/b    │
+   │ + your tools  │    │     cache/ ← caches  │   │              │
+   │ (immutable)   │    │   (persistent)       │   │ (mounted)    │
+   └───────┬───────┘    └──────────┬───────────┘   └──────┬───────┘
+           │                       │                       │
+           └───────────────────────┼───────────────────────┘
+                                   ▼
+                          ┌────────────────┐
+                          │  airlock-a     │
+                          │  airlock-b     │   composable containers
+                          └────────────────┘
+```
+
+Any image, any identity, any project — mix and match. One image with many identities for work/personal/OSS separation. One identity shared across worktrees for the same project. The pieces are independent so you assemble what you need.
+
+---
+
+## Why airlock
+
+- **AI agents need a blast radius.** Claude Code, opencode, Cursor's agent mode — they'll run any command they think is reasonable. Inside an airlock container, "reasonable" can't include reading your SSH keys or deleting `~/Documents`.
+- **Supply-chain attacks.** `npm install` runs arbitrary postinstall scripts. `pip install` runs `setup.py`. On a normal dev machine those have your home directory. In airlock they don't.
+- **Multiple projects without dotfile conflicts.** Different identities mean different `~/.gitconfig`, `~/.aws/credentials`, shell history, tool configs. No more accidentally committing with your work email on an OSS PR.
+- **Reset without losing your stuff.** The image is reproducible. The identity is persistent. The project is wherever it is on disk. Blow away the container without losing accumulated state.
+- **Zero repo invasion.** Nothing about airlock leaks into your project directory. No `.airlock/` folder, no config file, no `.gitignore` entry. Your public repos stay clean.
+- **Podman-rootless first.** Default to the safer engine. Docker works too.
+
+---
+
+## Quick start
+
+```bash
+cd ~/repos/some-project
+airlock init                    # interactive: pick image, identity, ports
+airlock up                      # build (if needed) and start the container
+airlock enter                   # drop into a shell at /workspace
+```
+
+From a new terminal anywhere on your system:
+
+```bash
+airlock enter some-project      # jump back in by project name
+```
+
+When you're done, `airlock down` stops the container. The identity persists. Next `airlock up` starts fresh from the image with your identity restored.
 
 ---
 
 ## How it works
 
-`airlock` stores all configuration in `~/.airlock/`. To use it with any project, you run `airlock init` once in that directory. Airlock asks you which container image to use and which identity (persistent home + cache) to attach, then remembers your choice.
-
-After that, `airlock up` starts the container and `airlock enter` drops you into a shell, with your project mounted at the container's working directory.
-
-### Global state layout
+`airlock` stores everything in `~/.airlock/`:
 
 ```
 ~/.airlock/
-  config.yaml            # Engine preference (podman/docker)
+  config.yaml              Engine preference (podman/docker)
+  projects.yaml            Map of project dirs → (image, identity, ports)
   identities/
-    <name>/              # A named persistent environment, e.g. "default", "oss", "work"
-      home/              # Mounted as $HOME inside the container
-      cache/             # Mounted as $HOME/.cache (package manager and build caches)
-  projects.yaml          # Maps project directories → (image, identity)
+    work/
+      home/                ← mounted as $HOME inside the container
+      cache/               ← mounted as $HOME/.cache
+      setup.sh             ← host-side dotfile setup (optional)
+      on-create.sh         ← first-boot setup inside the container (optional)
 ```
 
-### What gets mounted
+On `airlock up`, the container is created with three mounts:
 
 ```
-Host                              Container
---------------------------------  ---------------------------
-~/.airlock/identities/<id>/home   →  /home/<user>       ($HOME)
-~/.airlock/identities/<id>/cache  →  /home/<user>/.cache
-<your project directory>          →  /workspace          (workdir)
+Host                                 Container
+────                                 ─────────
+~/.airlock/identities/<id>/home  →   /home/<user>          ($HOME)
+~/.airlock/identities/<id>/cache →   /home/<user>/.cache
+<your project directory>          →   /workspace             (workdir)
 ```
 
-The project directory is mounted read-write. Nothing from `~/.airlock/` is visible inside the container except through the `home/` and `cache/` mounts.
+Nothing else on your host is visible to processes inside the container.
+
+```
+  ┌─────────────────────────────────────────────────────────────┐
+  │                         your host                            │
+  │                                                              │
+  │   ~/.ssh      ~/.aws       ~/Documents       ~/projects/...  │
+  │   ~/.config (your real one)                                  │
+  │                                                              │
+  │   ┌──────────────────────────────────────────────────────┐   │
+  │   │                  airlock container                    │   │
+  │   │                                                       │   │
+  │   │   /workspace     ←  ~/repos/myproj                   │   │
+  │   │   $HOME          ←  identity home/                   │   │
+  │   │   $HOME/.cache   ←  identity cache/                  │   │
+  │   │                                                       │   │
+  │   │   ┌────────────────────────────────────────────┐     │   │
+  │   │   │  claude, opencode, npm, pip, your shell,    │     │   │
+  │   │   │  anything you or an agent runs in here      │     │   │
+  │   │   └────────────────────────────────────────────┘     │   │
+  │   │   Can only touch the mounts above.                    │   │
+  │   └──────────────────────────────────────────────────────┘   │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+### What persists vs. what gets wiped
+
+| What                                       | Where                                | Survives `airlock down`?     |
+|--------------------------------------------|--------------------------------------|------------------------------|
+| Your code                                  | host filesystem, mounted in          | Yes — it's on the host        |
+| Shell history, dotfiles, auth tokens       | `identities/<id>/home/`              | Yes                           |
+| npm / pip / go / cargo caches              | `identities/<id>/cache/`             | Yes                           |
+| Installed system packages, `/etc`, `/opt`  | image layer                          | Yes, until image rebuild      |
+| Anything written outside those mounts      | container's writable layer           | **No — wiped on `down`**      |
+
+That last row is the safety net. If anything inside the container writes to `/tmp`, `/var`, `/srv`, or anywhere not mounted, the change is in the ephemeral container layer and disappears on `airlock down`. Agents and installers can't quietly accumulate state outside the spots you've explicitly allowed.
 
 ---
 
@@ -50,13 +129,14 @@ airlock forget [name]            Remove a project from the airlock index
 
 airlock identity list            List all named identities
 airlock identity add <name>      Create a new identity (home/ + cache/ dirs)
-airlock identity remove <name>   Remove an identity (--force required to delete files)
+airlock identity setup <name>    Run the identity's setup.sh on the host
+airlock identity remove <name>   Remove an identity (--force required)
 
-airlock up                       Build image (if Containerfile) and start the container
-airlock enter                    Open an interactive shell in the container
-airlock exec -- <cmd>            Run a command inside the container
-airlock down [name]              Stop and remove a container (keeps identity dirs)
-airlock list                     List all known projects with image, identity, and status
+airlock up                       Build image (if needed) and start the container
+airlock enter [name]             Open an interactive shell in the container
+airlock exec [name] -- <cmd>     Run a command inside the container
+airlock down [name]              Stop and remove a container (keeps identity)
+airlock list                     List all known projects with status and path
 airlock info                     Show resolved config for the current directory
 airlock version
 airlock help
@@ -72,32 +152,25 @@ airlock help
 
 ### Port forwarding
 
-Specify ports at `airlock init` time with `-p`. They are stored in `~/.airlock/projects.yaml` and passed to the container on creation.
+Specify ports at `airlock init` time with `-p`. They're stored in `~/.airlock/projects.yaml` and passed to the container on creation.
 
 ```bash
 airlock init -p 3000:3000 -p 5432:5432
+airlock init -p 8080                    # bare port → 8080:8080
 ```
 
-Bare port numbers are expanded to `host:container`:
-
-```bash
-airlock init -p 8080   # equivalent to -p 8080:8080
-```
-
-To change ports, re-run `airlock init -p <new-ports>` (stop the container first with `airlock down`).
+To change ports, re-run `airlock init -p <new-ports>` (stop the container first with `airlock down`). On re-init, the interactive prompts default to your existing settings — press Enter to keep them, only change what you need.
 
 ---
 
-## Typical workflow
+## Typical workflows
 
-### First time on a new system
+### First project on a new system
 
 ```bash
 cd ~/repos/some-project
 airlock init
 ```
-
-Airlock prompts you for an image and an identity:
 
 ```
 Setting up airlock for /home/user/repos/some-project
@@ -117,20 +190,13 @@ Saved to ~/.airlock/projects.yaml
 Run `airlock up` to start the container.
 ```
 
-Then:
-
-```bash
-airlock up       # pull image and start container
-airlock enter    # open a shell at /workspace inside the container
-```
-
 ### Subsequent projects
 
-On your second project, `airlock init` offers previously-used images as choices so you don't have to retype them.
+On the second project, `init` offers previously-used images so you don't retype them:
 
 ```
 Previously used images:
-  1. ubuntu:24.04  (used by: some-project)
+  1. ubuntu:24.04
   2. Enter a different image ref...
   3. Build from a Containerfile...
 Select image [1-3]: 1
@@ -140,51 +206,81 @@ Available identities:
   2. Create a new identity...
 Select identity [1-2]: 2
 Identity name: oss
-
-Created ~/.airlock/identities/oss/
 ```
 
-### Multiple terminals
+### Multiple terminals on one container
 
-Each `airlock enter` opens a new shell process inside the same running container — like extra terminals on the same machine. No extra containers are created.
+Each `airlock enter` opens a new shell in the same running container — like extra tabs on the same machine. No extra containers are created.
 
----
+### Jumping into a container from anywhere
 
-## Container images
-
-`airlock init` accepts any image your container runtime can use:
-
-- **Registry images**: `ubuntu:24.04`, `docker.io/golang:1.22`, `registry.fedoraproject.org/fedora-toolbox:41`
-- **Locally pulled images**: any image already in your local podman/docker image store
-- **Built from a Containerfile**: provide a path; airlock runs `podman build` before starting
-
-When choosing "Build from a Containerfile", airlock stores the containerfile path and tag in `~/.airlock/projects.yaml`. The build runs automatically on `airlock up` if the image isn't already present.
+```bash
+airlock enter some-project      # by name, from any cwd
+airlock exec some-project -- go test ./...
+```
 
 ---
 
-## Identities
+## Example Containerfiles
 
-An identity is a named pair of host directories (`home/` and `cache/`) that get mounted into the container. They persist across container rebuilds and are shared across any projects that reference them.
+The `examples/` directory has ready-to-use Containerfiles for common stacks. Copy one into your project as `Containerfile`, then `airlock init` and choose "Build from a Containerfile".
 
-### When to share vs isolate
+| File                                    | Stack                                                                    |
+|-----------------------------------------|--------------------------------------------------------------------------|
+| `Containerfile.golang`                  | Go 1.25, non-root `dev` user, `GOCACHE`/`GOMODCACHE` → XDG cache         |
+| `Containerfile.typescript`              | Node 22 + TypeScript, tsx, ts-node, npm cache → XDG                      |
+| `Containerfile.python-datascience`      | Python 3.12, Jupyter, pandas, numpy, scikit-learn, uv (EXPOSE 8888)      |
+| `Containerfile.systems`                 | Ubuntu 24.04, clang, cmake, gdb, valgrind; optional Rust                 |
+| `Containerfile.everything`              | All of the above + Claude Code + opencode — a kitchen-sink AI dev box    |
 
-- **Separate identity per project** — fully isolated agent state, shell history, and tool configs. Safe default.
-- **Shared identity across related projects** — same dotfiles, shell history, and tool configs. Useful for worktrees or closely related repos.
+All examples:
+- Create a non-root `dev` user at UID 1000 so Podman rootless UID mapping is clean
+- Point package manager caches at `$HOME/.cache` (mounted from the host identity) so dependencies survive container rebuilds
+- Use `$HOME` instead of hardcoded paths so the same script works with any image user
+
+### Example: AI dev box
+
+```bash
+cp examples/Containerfile.everything ./Containerfile
+airlock init -p 3000:3000 -p 8080:8080 -p 8888:8888
+airlock up && airlock enter
+```
+
+Inside the container, log in to Claude Code once. The OAuth credentials land in `$HOME/.claude/`, which lives in your identity dir on the host — so subsequent containers built from the same identity are already authenticated.
+
+```bash
+claude            # first run: complete OAuth in browser; credentials persist
+opencode          # same story
+go test ./...     # use the rest of the toolchain
+```
+
+> Note: tools that install into `$HOME` during image build (Claude Code, nvm, rustup, etc.) get hidden at runtime by the identity home mount. The examples handle this by either (a) copying the resulting binary into `/usr/local/bin` as root, or (b) deferring installation to `on-create.sh`, which runs *after* the mount is in place. See `Containerfile.everything` for the pattern.
+
+---
+
+## Identities in depth
+
+An identity is a named pair of host directories (`home/` and `cache/`) that get mounted into the container. They persist across container rebuilds and can be shared across projects.
+
+### When to share vs. isolate
+
+- **Separate identity per project** — fully isolated agent state, shell history, tool configs. Safest default for unrelated projects.
+- **Shared identity across related projects** — same dotfiles, shell history, configs. Good for worktrees or closely related repos.
 
 ### Managing identities
 
 ```bash
 airlock identity list
 airlock identity add work
-airlock identity setup work      # run setup.sh to wire up dotfiles
-airlock identity remove old-identity --force
+airlock identity setup work          # run setup.sh on the host
+airlock identity remove old --force
 ```
 
 ### Home directory bootstrapping
 
-When `airlock up` starts a container for the first time, it automatically seeds the identity's `home/` directory with the image's `/etc/skel` defaults. This gives you a working shell (`.bashrc`, `.profile`, basic prompt) immediately, with no configuration.
+On first `airlock up`, airlock seeds the identity's `home/` with the image's `/etc/skel` defaults — so you get a working shell (`.bashrc`, `.profile`, basic prompt) immediately with no configuration.
 
-Each identity also gets two hook scripts created alongside `home/` and `cache/`:
+Each identity also gets two hook scripts beside `home/` and `cache/`:
 
 ```
 ~/.airlock/identities/<name>/
@@ -194,43 +290,45 @@ Each identity also gets two hook scripts created alongside `home/` and `cache/`:
   cache/
 ```
 
-**`setup.sh`** — host-side setup, run explicitly with `airlock identity setup <name>`. Good for symlinking files from a dotfiles repo or credential store. The script receives `IDENTITY_HOME` pointing to the identity's `home/` directory. Safe to re-run at any time.
+**`setup.sh`** — host-side, run explicitly with `airlock identity setup <name>`. Receives `$IDENTITY_HOME` pointing to the identity's `home/`. Good for symlinking from a dotfiles repo or credential store. Safe to re-run.
 
 ```bash
 # ~/.airlock/identities/work/setup.sh
-ln -sf ~/dotfiles/.gitconfig  "$IDENTITY_HOME/.gitconfig"
-ln -sf ~/dotfiles/.bashrc     "$IDENTITY_HOME/.bashrc"
+ln -sf ~/dotfiles/.gitconfig "$IDENTITY_HOME/.gitconfig"
+ln -sf ~/dotfiles/.bashrc    "$IDENTITY_HOME/.bashrc"
 ```
 
-**`on-create.sh`** — runs inside the container automatically on first `airlock up`. Good for installing shell frameworks, setting git global config, or configuring version managers. Always use `$HOME` (not hardcoded paths like `/home/ubuntu`) so the script works with any image.
+**`on-create.sh`** — runs inside the container automatically on first `airlock up`. Use `$HOME` (not hardcoded paths) so the script works with any image. Good for shell frameworks, git config, version managers.
 
 ```bash
 # ~/.airlock/identities/work/on-create.sh
-git config --global user.name  "Jaime"
-git config --global user.email "jaime@example.com"
+git config --global user.name  "Your Name"
+git config --global user.email "yourname@example.com"
 ```
 
-Both scripts start as commented-out templates. Airlock only runs `on-create.sh` if it contains at least one non-comment line. A sentinel file (`$HOME/.airlock-bootstrapped`) prevents re-running on subsequent `airlock up` calls.
+Both scripts start as commented templates. Airlock only runs `on-create.sh` if it contains at least one non-comment line. A sentinel file (`$HOME/.airlock-bootstrapped`) prevents re-running on subsequent `airlock up` calls.
 
 ---
 
-## Git Worktrees & Parallel Agents
+## Git worktrees & parallel agents
 
-Airlock works naturally with git worktrees. Each worktree path is its own project entry in `~/.airlock/projects.yaml`, so each gets its own container. Run `airlock init` once in each worktree.
+Each worktree path is its own entry in `~/.airlock/projects.yaml`, so each gets its own container. Run `airlock init` once per worktree.
 
 ```bash
-git worktree add ../myproject-feature-auth feature/auth
-cd ../myproject-feature-auth
+git worktree add ../myproj-feature-auth feature/auth
+cd ../myproj-feature-auth
 airlock init          # pick image + identity (can share with main worktree)
 airlock up && airlock enter
 ```
 
-To share cache across worktrees, point them at the same identity:
+To share caches across worktrees, point them at the same identity:
 
 ```bash
-# In each worktree, airlock init → pick the same identity (e.g. "myproject")
-airlock identity add myproject
+airlock identity add myproj
+# In each worktree, airlock init → pick the same identity ("myproj")
 ```
+
+This is also how you run multiple agents in parallel without them stepping on each other — separate worktrees, separate containers, shared cache, isolated working trees.
 
 ---
 
@@ -247,11 +345,11 @@ airlock forget my-old-project
 airlock forget
 ```
 
-`airlock forget` removes the project from `~/.airlock/projects.yaml` only. It does not stop or remove the container (run `airlock down` first if needed) and does not delete the identity directories.
+`airlock forget` removes the project from `~/.airlock/projects.yaml` only. It does not stop or remove the container (run `airlock down` first if needed) and does not delete identity directories.
 
 ---
 
-## Identities & Credentials
+## Identities & credentials
 
 Identities intentionally do **not** manage secrets internally. Instead, symlink only what each project needs into the identity's `home/` directory from a shared host credential store. This keeps the "secret materialization step" on the host and makes access easy to audit.
 
@@ -275,8 +373,8 @@ Identities intentionally do **not** manage secrets internally. Instead, symlink 
 
 ```bash
 # SSH (single key)
-mkdir -p ~/.airlock/identities/work/.home/.ssh
-chmod 700 ~/.airlock/identities/work/.home/.ssh
+mkdir -p ~/.airlock/identities/work/home/.ssh
+chmod 700 ~/.airlock/identities/work/home/.ssh
 ln -sf ~/.config/airlock/identities/work-foo/.ssh/id_ed25519_work_foo \
        ~/.airlock/identities/work/home/.ssh/id_ed25519_work_foo
 ln -sf ~/.config/airlock/identities/work-foo/.ssh/config \
@@ -287,58 +385,19 @@ ln -sf ~/.config/airlock/identities/work-foo/.gitconfig \
        ~/.airlock/identities/work/home/.gitconfig
 ```
 
-**Never symlink your entire `~/.ssh`.**
+**Never symlink your entire `~/.ssh`.** The whole point is to expose only what this identity needs.
 
 ### Forwarding environment variables
 
 ```bash
-airlock -e ANTHROPIC_API_KEY enter
-airlock -e AWS_PROFILE=my-profile enter
+airlock -e ANTHROPIC_API_KEY enter      # forward from host
+airlock -e AWS_PROFILE=my-profile enter # set directly
 ```
 
 ### Auditing what the container can see
 
 ```bash
 find ~/.airlock/identities/<name>/home -maxdepth 3 -type l -print -exec readlink {} \;
-```
-
----
-
-## Example Containerfiles
-
-The `examples/` directory contains ready-to-use Containerfiles for common project types. Copy the one you want into your project as `Containerfile`, then run `airlock init` and choose "Build from a Containerfile".
-
-| File | Language / Stack | Notes |
-|---|---|---|
-| `Containerfile.typescript` | Node 22 + TypeScript, tsx, ts-node | EXPOSE 3000; npm cache → XDG |
-| `Containerfile.golang` | Go 1.24 | Non-root `dev` user; GOCACHE/GOMODCACHE → XDG |
-| `Containerfile.python-datascience` | Python 3.12, Jupyter, pandas, scikit-learn | EXPOSE 8888; pip/uv cache → XDG |
-| `Containerfile.systems` | Ubuntu 24.04, clang, cmake, gdb | Optional Rust toolchain (commented out) |
-
-All examples:
-- Create a non-root `dev` user so Podman rootless UID mapping works correctly
-- Point package manager caches at `$HOME/.cache` (which airlock mounts from the host identity), so downloaded dependencies survive container rebuilds
-- Use `$HOME` instead of hardcoded paths so the scripts work with any image user
-
-### TypeScript / Node example
-
-```bash
-cp examples/Containerfile.typescript ./Containerfile
-airlock init -p 3000:3000
-airlock up && airlock enter
-# Inside the container:
-npm install
-npx tsx src/index.ts
-```
-
-### Jupyter notebook example
-
-```bash
-cp examples/Containerfile.python-datascience ./Containerfile
-airlock init -p 8888:8888
-airlock up
-airlock exec -- jupyter lab --ip=0.0.0.0 --no-browser
-# Open http://localhost:8888 in your browser
 ```
 
 ---
@@ -369,6 +428,7 @@ sudo apt install podman
 ```
 
 #### macOS
+NOTE: Not extensively tested yet on Mac! But it should work via podman or colima+docker.
 
 **Option A: Podman Machine** (recommended)
 
@@ -385,9 +445,10 @@ brew install colima docker
 colima start
 ```
 
-> **Note:** On macOS your project must be under `$HOME` (shared into the VM by default). For other paths, configure additional VM mounts.
+> On macOS your project must be under `$HOME` (shared into the VM by default). For other paths, configure additional VM mounts.
 
 ---
 
 ## License
+
 MIT
