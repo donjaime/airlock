@@ -145,6 +145,11 @@ func (r *Runner) Exec(ctx context.Context, spec *ContainerSpec, extraEnv []strin
 	return r.runCmdInteractive(ctx, r.engineBin(), args...)
 }
 
+// IsRunning reports whether the container for spec is currently running.
+func (r *Runner) IsRunning(ctx context.Context, spec *ContainerSpec) (bool, error) {
+	return r.containerRunning(ctx, containerName(spec))
+}
+
 // Down stops and removes the container with the given full container name.
 func (r *Runner) Down(ctx context.Context, name string) error {
 	_ = r.runCmdInteractive(ctx, r.engineBin(), "stop", name)

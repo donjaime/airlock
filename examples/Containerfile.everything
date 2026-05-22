@@ -50,16 +50,23 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 # ENV PATH=/root/.cargo/bin:$PATH
 
 # ── Dev user ──────────────────────────────────────────────────────────────────
-RUN useradd -m -s /bin/bash dev
+# ubuntu:24.04 ships with a default 'ubuntu' user at UID 1000. Remove it so
+# 'dev' can claim UID 1000, which keeps Podman's --userns=keep-id mapping clean.
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    useradd -m -s /bin/bash -u 1000 dev
 
 USER dev
 ENV HOME=/home/dev
 WORKDIR /workspace
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
-# Installed as dev so it lands in $HOME/.local/bin, not /root/.local/bin.
+# Must install as dev (script targets the current user's home).
+# Then copy the binary to /usr/local/bin as root — airlock mounts the identity
+# home/ dir over /home/dev at runtime, which would hide ~/.local/bin/claude.
 RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH=$HOME/.local/bin:$PATH
+USER root
+RUN cp /home/dev/.local/bin/claude /usr/local/bin/claude
+USER dev
 
 # ── Cache dirs → airlock's cache mount ───────────────────────────────────────
 # airlock mounts $HOME/.cache from the host identity, making all of these

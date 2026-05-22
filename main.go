@@ -141,7 +141,7 @@ func main() {
 		eng := mustDetectEngine(gcfg.Engine)
 		r := newRunner(eng)
 		spec := mustLoadSpec(gcfg, eng)
-		if err := r.Up(ctx, spec); err != nil {
+		if err := ensureRunning(ctx, r, spec); err != nil {
 			fatalf("up error: %v\n", err)
 		}
 		if err := r.Enter(ctx, spec, []string(envVarsFlag)); err != nil {
@@ -159,7 +159,7 @@ func main() {
 		eng := mustDetectEngine(gcfg.Engine)
 		r := newRunner(eng)
 		spec := mustLoadSpec(gcfg, eng)
-		if err := r.Up(ctx, spec); err != nil {
+		if err := ensureRunning(ctx, r, spec); err != nil {
 			fatalf("up error: %v\n", err)
 		}
 		if err := r.Exec(ctx, spec, []string(envVarsFlag), cmdArgs); err != nil {
@@ -671,6 +671,19 @@ func isEffectivelyEmpty(path string) bool {
 		}
 	}
 	return true
+}
+
+// ensureRunning skips Up (and its noisy build check) if the container is
+// already running. Falls back to Up when it needs to build or start.
+func ensureRunning(ctx context.Context, r *container.Runner, spec *container.ContainerSpec) error {
+	running, err := r.IsRunning(ctx, spec)
+	if err != nil {
+		return err
+	}
+	if running {
+		return nil
+	}
+	return r.Up(ctx, spec)
 }
 
 func newRunner(eng container.Engine) *container.Runner {
