@@ -35,7 +35,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Global Node tools (system-wide, installed as root) ────────────────────────
-RUN npm install -g typescript tsx ts-node opencode
+RUN npm install -g typescript tsx ts-node opencode-ai
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
 RUN curl -fsSL https://claude.ai/install.sh | bash
