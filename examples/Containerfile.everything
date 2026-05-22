@@ -1,5 +1,5 @@
 # All-in-one dev sandbox: Go, TypeScript/Node 22, Python datascience,
-# systems tools, and opencode.
+# systems tools, claude code and opencode.
 #
 # Usage:
 #   cp examples/Containerfile.everything ./Containerfile
@@ -37,9 +37,6 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # ── Global Node tools (system-wide, installed as root) ────────────────────────
 RUN npm install -g typescript tsx ts-node opencode-ai
 
-# ── Claude Code ───────────────────────────────────────────────────────────────
-RUN curl -fsSL https://claude.ai/install.sh | bash
-
 # ── Python datascience stack ──────────────────────────────────────────────────
 # --break-system-packages is appropriate inside a container.
 RUN pip3 install --no-cache-dir --break-system-packages \
@@ -58,6 +55,11 @@ RUN useradd -m -s /bin/bash dev
 USER dev
 ENV HOME=/home/dev
 WORKDIR /workspace
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+# Installed as dev so it lands in $HOME/.local/bin, not /root/.local/bin.
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH=$HOME/.local/bin:$PATH
 
 # ── Cache dirs → airlock's cache mount ───────────────────────────────────────
 # airlock mounts $HOME/.cache from the host identity, making all of these
