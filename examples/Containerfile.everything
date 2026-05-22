@@ -1,0 +1,83 @@
+# All-in-one dev sandbox: Go, TypeScript/Node 22, Python datascience,
+# systems tools, and opencode.
+#
+# Usage:
+#   cp examples/Containerfile.everything ./Containerfile
+#   airlock init -p 3000:3000 -p 8080:8080 -p 8888:8888
+#   airlock up && airlock enter
+
+# Pull Go from the official image — avoids hardcoding a tarball URL.
+FROM golang:1.25-bookworm AS go-source
+
+FROM ubuntu:24.04
+
+# ── Go runtime ────────────────────────────────────────────────────────────────
+COPY --from=go-source /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:$PATH
+
+# ── System packages ───────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # essentials
+    git curl bash ca-certificates xz-utils \
+    # systems / embedded dev
+    build-essential cmake ninja-build pkg-config \
+    clang clang-format clang-tidy lldb \
+    gdb valgrind \
+    # python
+    python3 python3-pip python3-venv \
+    # handy CLI tools
+    jq ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Node.js 22 ────────────────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Global Node tools (system-wide, installed as root) ────────────────────────
+RUN npm install -g typescript tsx ts-node opencode
+
+# ── Claude Code ───────────────────────────────────────────────────────────────
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# ── Python datascience stack ──────────────────────────────────────────────────
+# --break-system-packages is appropriate inside a container.
+RUN pip3 install --no-cache-dir --break-system-packages \
+    uv \
+    jupyter jupyterlab \
+    numpy pandas matplotlib seaborn scikit-learn
+
+# Optional: Rust toolchain (uncomment to include — adds ~1 GB to image size)
+# RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+#     | sh -s -- -y --no-modify-path --default-toolchain stable
+# ENV PATH=/root/.cargo/bin:$PATH
+
+# ── Dev user ──────────────────────────────────────────────────────────────────
+RUN useradd -m -s /bin/bash dev
+
+USER dev
+ENV HOME=/home/dev
+WORKDIR /workspace
+
+# ── Cache dirs → airlock's cache mount ───────────────────────────────────────
+# airlock mounts $HOME/.cache from the host identity, making all of these
+# persistent across container rebuilds.
+
+# Go
+ENV GOPATH=$HOME/.cache/go
+ENV GOMODCACHE=$HOME/.cache/go/mod
+ENV GOCACHE=$HOME/.cache/go/build
+ENV PATH=$HOME/.cache/go/bin:$PATH
+
+# Node / npm
+ENV NPM_CONFIG_CACHE=$HOME/.cache/npm
+
+# Python
+ENV PIP_CACHE_DIR=$HOME/.cache/pip
+ENV UV_CACHE_DIR=$HOME/.cache/uv
+
+# ── Ports ─────────────────────────────────────────────────────────────────────
+# 3000  — Node/TypeScript dev servers
+# 8080  — Go HTTP servers
+# 8888  — Jupyter Lab
+EXPOSE 3000 8080 8888

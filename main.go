@@ -562,14 +562,14 @@ func runList(ctx context.Context) {
 		return
 	}
 
-	fmt.Printf("%-25s %-35s %-15s %s\n", "NAME", "IMAGE", "IDENTITY", "STATUS")
+	fmt.Printf("%-25s %-35s %-15s %-10s %s\n", "NAME", "IMAGE", "IDENTITY", "STATUS", "PATH")
 	for _, p := range idx.SortedPaths() {
 		e := idx.Projects[p]
 		status := "stopped"
 		if runningSet["airlock-"+e.Name] {
 			status = "running"
 		}
-		fmt.Printf("%-25s %-35s %-15s %s\n", e.Name, e.ResolvedImage(), e.Identity, status)
+		fmt.Printf("%-25s %-35s %-15s %-10s %s\n", e.Name, e.ResolvedImage(), e.Identity, status, p)
 	}
 }
 
