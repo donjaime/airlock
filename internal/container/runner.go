@@ -73,7 +73,9 @@ func (r *Runner) Up(ctx context.Context, spec *ContainerSpec) error {
 	}
 	if !running {
 		if err := r.runCmd(ctx, r.engineBin(), "start", name); err != nil {
-			return err
+			return fmt.Errorf(
+				"container %q exists but failed to start (volume mounts may be stale from a previous configuration).\n"+
+					"Run `airlock down` then `airlock up` to recreate it: %w", name, err)
 		}
 	}
 

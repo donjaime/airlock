@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash dev
 
 USER dev
+ENV HOME=/home/dev
 WORKDIR /workspace
 
 # Point pip/uv caches at XDG_CACHE_HOME so airlock's cache mount persists them.

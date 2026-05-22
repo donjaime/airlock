@@ -1,4 +1,4 @@
-FROM golang:1.24-bookworm
+FROM golang:1.25-bookworm
 
 # Install common dev tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -s /bin/bash dev
 
 USER dev
+ENV HOME=/home/dev
 WORKDIR /workspace
 
 # Redirect Go caches to XDG_CACHE_HOME so airlock's cache mount persists them.
