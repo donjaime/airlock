@@ -353,7 +353,7 @@ func (r *Runner) createContainer(ctx context.Context, spec *ContainerSpec, u *Us
 	for _, p := range spec.Ports {
 		args = append(args, "-p", p)
 	}
-	args = append(args, "--hostname", "airlock")
+	args = append(args, "--hostname", spec.Name)
 	args = append(args, spec.ResolvedImage())
 	args = append(args, "sleep", "infinity")
 
